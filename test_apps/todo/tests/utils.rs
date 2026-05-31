@@ -1,100 +1,181 @@
 use std::sync::{Arc, OnceLock};
 
+use diesel::prelude::*;
 use poem::{EndpointExt, Route, get, handler, middleware::AddData};
 use poem_openapi::OpenApiService;
 use reqwest::Client;
-use sqlx::PgPool;
 use test_app_todo::io::{
-    AppState, CompleteApi, CreateApi, DeleteApi, DueDatesApi, GetApi, InboxApi, ListApi, OutboxApi,
-    ReopenApi, UpdateApi, connect, migrate, start_mulac,
+    AppState, CompleteApi, CreateApi, DbPool, DeleteApi, DueDatesApi, GetApi, InboxApi, ListApi,
+    OutboxApi, ReopenApi, UpdateApi, build_pool, run_migrations, start_mulac,
 };
 use tokio::sync::{Mutex, OwnedMutexGuard};
 use uuid::Uuid;
 
 pub const STATUS_COMPLETED: i32 = 5;
 
-#[derive(sqlx::FromRow)]
+#[derive(diesel::QueryableByName)]
 pub struct OutboxRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
     pub id: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub event_type: String,
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
     pub payload: serde_json::Value,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub status: String,
+    #[diesel(sql_type = diesel::sql_types::Timestamptz)]
     pub created_at: chrono::DateTime<chrono::Utc>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamptz>)]
     pub published_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[diesel(sql_type = diesel::sql_types::Int4)]
     pub attempts: i32,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(diesel::QueryableByName)]
 pub struct InboxRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
     pub id: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub message_type: String,
+    #[diesel(sql_type = diesel::sql_types::Jsonb)]
     pub payload: serde_json::Value,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub status: String,
+    #[diesel(sql_type = diesel::sql_types::Timestamptz)]
     pub received_at: chrono::DateTime<chrono::Utc>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamptz>)]
     pub processed_at: Option<chrono::DateTime<chrono::Utc>>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
     pub error: Option<String>,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(diesel::QueryableByName)]
 pub struct CommandEntryRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
     pub id: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub command_type: String,
+    #[diesel(sql_type = diesel::sql_types::Int4)]
     pub status: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub payload: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
     pub meta: Option<serde_json::Value>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
     pub extra_info: Option<serde_json::Value>,
+    #[diesel(sql_type = diesel::sql_types::Int4)]
     pub attempts: i32,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
     pub reservation_id: Option<Uuid>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamptz>)]
     pub processed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-#[derive(sqlx::FromRow)]
+#[derive(diesel::QueryableByName)]
 pub struct EventEntryRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
     pub id: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub event_type: String,
+    #[diesel(sql_type = diesel::sql_types::Int4)]
     pub status: i32,
+    #[diesel(sql_type = diesel::sql_types::Text)]
     pub payload: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
     pub meta: Option<serde_json::Value>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Jsonb>)]
     pub extra_info: Option<serde_json::Value>,
+    #[diesel(sql_type = diesel::sql_types::Int4)]
     pub attempts: i32,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Uuid>)]
     pub reservation_id: Option<Uuid>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamptz>)]
     pub processed_at: Option<chrono::DateTime<chrono::Utc>>,
 }
 
-pub async fn fetch_outbox(pool: &PgPool) -> Vec<OutboxRow> {
-    sqlx::query_as::<_, OutboxRow>(
+pub async fn fetch_outbox(pool: &DbPool) -> Vec<OutboxRow> {
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query(
         "SELECT id, event_type, payload, status, created_at, published_at, attempts FROM outbox_messages",
     )
-    .fetch_all(pool)
-    .await
+    .load::<OutboxRow>(&mut conn)
     .unwrap()
 }
 
-pub async fn fetch_command_entries(pool: &PgPool) -> Vec<CommandEntryRow> {
-    sqlx::query_as::<_, CommandEntryRow>(
+pub async fn fetch_command_entries(pool: &DbPool) -> Vec<CommandEntryRow> {
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query(
         "SELECT id, command_type, status, payload, meta, extra_info, attempts, reservation_id, processed_at FROM command_entries ORDER BY received_at ASC",
     )
-    .fetch_all(pool)
-    .await
+    .load::<CommandEntryRow>(&mut conn)
     .unwrap()
 }
 
-pub async fn fetch_event_entries(pool: &PgPool) -> Vec<EventEntryRow> {
-    sqlx::query_as::<_, EventEntryRow>(
+pub async fn fetch_event_entries(pool: &DbPool) -> Vec<EventEntryRow> {
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query(
         "SELECT id, event_type, status, payload, meta, extra_info, attempts, reservation_id, processed_at FROM event_entries ORDER BY received_at ASC",
     )
-    .fetch_all(pool)
-    .await
+    .load::<EventEntryRow>(&mut conn)
     .unwrap()
 }
 
-pub async fn fetch_inbox(pool: &PgPool) -> Vec<InboxRow> {
-    sqlx::query_as::<_, InboxRow>(
+pub async fn fetch_inbox(pool: &DbPool) -> Vec<InboxRow> {
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query(
         "SELECT id, message_type, payload, status, received_at, processed_at, error FROM inbox_messages",
     )
-    .fetch_all(pool)
-    .await
+    .load::<InboxRow>(&mut conn)
     .unwrap()
+}
+
+#[derive(diesel::QueryableByName)]
+pub struct TodoRow {
+    #[diesel(sql_type = diesel::sql_types::Uuid)]
+    pub id: Uuid,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub title: String,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Text>)]
+    pub description: Option<String>,
+    #[diesel(sql_type = diesel::sql_types::Text)]
+    pub status: String,
+    #[diesel(sql_type = diesel::sql_types::Timestamptz)]
+    pub created_at: chrono::DateTime<chrono::Utc>,
+    #[diesel(sql_type = diesel::sql_types::Timestamptz)]
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    #[diesel(sql_type = diesel::sql_types::Nullable<diesel::sql_types::Timestamptz>)]
+    pub due_at: Option<chrono::DateTime<chrono::Utc>>,
+}
+
+pub async fn fetch_todo_row(pool: &DbPool, id: Uuid) -> TodoRow {
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query(
+        "SELECT id, title, description, status, created_at, updated_at, due_at FROM todos WHERE id = $1",
+    )
+    .bind::<diesel::sql_types::Uuid, _>(id)
+    .load::<TodoRow>(&mut conn)
+    .unwrap()
+    .into_iter()
+    .next()
+    .expect("todo row not found")
+}
+
+pub async fn count_todos(pool: &DbPool, id: Uuid) -> i64 {
+    #[derive(diesel::QueryableByName)]
+    struct Count {
+        #[diesel(sql_type = diesel::sql_types::BigInt)]
+        count: i64,
+    }
+
+    let mut conn = pool.get().unwrap();
+    diesel::sql_query("SELECT count(*) AS count FROM todos WHERE id = $1")
+        .bind::<diesel::sql_types::Uuid, _>(id)
+        .load::<Count>(&mut conn)
+        .unwrap()
+        .into_iter()
+        .next()
+        .unwrap()
+        .count
 }
 
 #[handler]
@@ -107,29 +188,25 @@ fn test_lock() -> Arc<Mutex<()>> {
     LOCK.get_or_init(|| Arc::new(Mutex::new(()))).clone()
 }
 
-pub async fn start_test_app() -> (String, PgPool, OwnedMutexGuard<()>) {
+pub async fn start_test_app() -> (String, DbPool, OwnedMutexGuard<()>) {
     let guard = test_lock().lock_owned().await;
     dotenvy::dotenv().ok();
 
     let database_url = std::env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
-    let pool = connect(&database_url).await.unwrap();
-    migrate(&pool).await.unwrap();
+    run_migrations(&database_url).unwrap();
+    let pool = build_pool(&database_url).unwrap();
 
-    for table in &[
-        "event_entries",
-        "command_entries",
-        "outbox_messages",
-        "inbox_messages",
-        "todos",
-    ] {
-        sqlx::query(&format!("DELETE FROM {table}"))
-            .execute(&pool)
-            .await
-            .unwrap();
+    {
+        let mut conn = pool.get().unwrap();
+        diesel::sql_query(
+            "TRUNCATE TABLE event_entries, command_entries, outbox_messages, inbox_messages, todos RESTART IDENTITY CASCADE",
+        )
+        .execute(&mut conn)
+        .unwrap();
     }
 
-    let kernel = start_mulac(pool.clone(), &database_url).await.unwrap();
+    let kernel = start_mulac(pool.clone()).await.unwrap();
     let state = AppState::new(pool.clone(), kernel.state());
 
     let api = OpenApiService::new(
@@ -189,7 +266,7 @@ pub fn client() -> reqwest::Client {
         .unwrap()
 }
 
-pub async fn assert_outbox_pending(pool: &PgPool, event_type: &str) {
+pub async fn assert_outbox_pending(pool: &DbPool, event_type: &str) {
     let outbox = fetch_outbox(pool).await;
     let matching: Vec<_> = outbox
         .iter()
@@ -199,7 +276,7 @@ pub async fn assert_outbox_pending(pool: &PgPool, event_type: &str) {
     assert_eq!(matching[0].status, "pending");
 }
 
-pub async fn assert_command_completed(pool: &PgPool, command_type: &str) {
+pub async fn assert_command_completed(pool: &DbPool, command_type: &str) {
     let cmds = fetch_command_entries(pool).await;
     let matching: Vec<_> = cmds
         .iter()
@@ -209,7 +286,7 @@ pub async fn assert_command_completed(pool: &PgPool, command_type: &str) {
     assert_eq!(matching[0].status, STATUS_COMPLETED);
 }
 
-pub async fn assert_event_completed(pool: &PgPool, event_type: &str) {
+pub async fn assert_event_completed(pool: &DbPool, event_type: &str) {
     let events = fetch_event_entries(pool).await;
     let matching: Vec<_> = events
         .iter()

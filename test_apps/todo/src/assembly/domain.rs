@@ -3,10 +3,9 @@ use poem_openapi::{Enum, Object};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
-#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Enum, sqlx::Type)]
+#[derive(Debug, Clone, Copy, Eq, PartialEq, Serialize, Deserialize, Enum)]
 #[serde(rename_all = "snake_case")]
 #[oai(rename_all = "snake_case")]
-#[sqlx(type_name = "text", rename_all = "snake_case")]
 pub enum TodoStatus {
     Active,
     Completed,

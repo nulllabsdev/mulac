@@ -33,49 +33,46 @@ mod models {
 
 mod handler {
     use super::models::{CompleteTodoCommand, TodoCompleted};
-    use crate::assembly::io::{TodoEvent, block_on_blocking};
+    use crate::assembly::io::{DbPool, TodoEvent};
     use kernel::{CommandError, CommandHandlerPort};
-    use sqlx::PgPool;
 
     pub struct CompleteTodoHandler {
-        pool: PgPool,
+        pool: DbPool,
     }
 
     impl CompleteTodoHandler {
-        pub fn new(pool: PgPool) -> Self {
+        pub fn new(pool: DbPool) -> Self {
             Self { pool }
         }
     }
 
     impl CommandHandlerPort<CompleteTodoCommand, TodoEvent> for CompleteTodoHandler {
         fn execute(&self, command: CompleteTodoCommand) -> Result<Vec<TodoEvent>, CommandError> {
-            let pool = self.pool.clone();
-            let todo = block_on_blocking(async move {
-                super::infra_sqlx_pg::complete(&pool, command.todo_id).await
-            })
-            .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
+            let todo = super::infra_diesel::complete(&self.pool, command.todo_id)
+                .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
 
             Ok(vec![TodoEvent::TodoCompleted(TodoCompleted { todo })])
         }
     }
 }
 
-mod infra_sqlx_pg {
-    use crate::assembly::io::{AppError, Clock, TodoDto, TodoRow, TodoStatus};
-    use sqlx::PgPool;
+mod infra_diesel {
+    use crate::assembly::io::{AppError, Clock, DbPool, TodoDto, TodoRow, TodoStatus};
+    use crate::schema::todos;
+    use diesel::prelude::*;
     use uuid::Uuid;
-    pub async fn complete(pool: &PgPool, id: Uuid) -> Result<TodoDto, AppError> {
-        let sql = "UPDATE todos SET status = $2, updated_at = $3 WHERE id = $1 RETURNING id, title, description, status, created_at, updated_at, due_at";
 
-        let row = sqlx::query_as::<_, TodoRow>(sql)
-            .bind(id)
-            .bind(TodoStatus::Completed.as_str())
-            .bind(Clock::now())
-            .fetch_optional(pool)
-            .await
+    pub fn complete(pool: &DbPool, id: Uuid) -> Result<TodoDto, AppError> {
+        let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+        let row = diesel::update(todos::table.find(id))
+            .set((
+                todos::status.eq(TodoStatus::Completed.as_str()),
+                todos::updated_at.eq(Clock::now()),
+            ))
+            .get_result::<TodoRow>(&mut conn)
+            .optional()
             .map_err(|e| AppError::Storage(e.into()))?
             .ok_or(AppError::NotFound)?;
-
         row.try_into()
     }
 }
@@ -86,7 +83,7 @@ mod http {
         AppState,
         assembly::io::{
             ApiError, AppCommand, MulacState, NewCommandEnvelope, TodoDto, fetch_todo,
-            interpret_dispatch_error,
+            interpret_dispatch_error, run_blocking,
         },
         //
     };
@@ -121,7 +118,10 @@ mod http {
             id: Path<Uuid>,
         ) -> Result<Json<TodoDto>, ApiError> {
             dispatch_complete_todo(&state.mulac, id.0)?;
-            Ok(Json(fetch_todo(&state.pool, id.0).await?))
+            let pool = state.pool.clone();
+            let id = id.0;
+            let todo = run_blocking(move || fetch_todo(&pool, id)).await?;
+            Ok(Json(todo))
         }
     }
 }

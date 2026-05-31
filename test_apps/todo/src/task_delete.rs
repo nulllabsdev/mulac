@@ -33,48 +33,43 @@ mod models {
 
 mod handler {
     use super::models::{DeleteTodoCommand, TodoDeleted};
-    use crate::assembly::io::{TodoEvent, block_on_blocking};
+    use crate::assembly::io::{DbPool, TodoEvent};
     use kernel::{CommandError, CommandHandlerPort};
-    use sqlx::PgPool;
 
     pub struct DeleteTodoHandler {
-        pool: PgPool,
+        pool: DbPool,
     }
 
     impl DeleteTodoHandler {
-        pub fn new(pool: PgPool) -> Self {
+        pub fn new(pool: DbPool) -> Self {
             Self { pool }
         }
     }
 
     impl CommandHandlerPort<DeleteTodoCommand, TodoEvent> for DeleteTodoHandler {
         fn execute(&self, command: DeleteTodoCommand) -> Result<Vec<TodoEvent>, CommandError> {
-            let pool = self.pool.clone();
-            let todo = block_on_blocking(async move {
-                super::infra_sqlx_pg::delete_from_command(&pool, command).await
-            })
-            .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
+            let todo = super::infra_diesel::delete_from_command(&self.pool, command)
+                .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
 
             Ok(vec![TodoEvent::TodoDeleted(TodoDeleted { todo })])
         }
     }
 }
 
-mod infra_sqlx_pg {
+mod infra_diesel {
     use super::models::DeleteTodoCommand;
-    use crate::assembly::io::{AppError, TodoDto, TodoRow};
-    use sqlx::PgPool;
+    use crate::assembly::io::{AppError, DbPool, TodoDto, TodoRow};
+    use crate::schema::todos;
+    use diesel::prelude::*;
 
-    pub async fn delete_from_command(
-        pool: &PgPool,
+    pub fn delete_from_command(
+        pool: &DbPool,
         command: DeleteTodoCommand,
     ) -> Result<TodoDto, AppError> {
-        let sql = "DELETE FROM todos WHERE id = $1 RETURNING id, title, description, status, created_at, updated_at, due_at";
-
-        let row = sqlx::query_as::<_, TodoRow>(sql)
-            .bind(command.todo_id)
-            .fetch_optional(pool)
-            .await
+        let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+        let row = diesel::delete(todos::table.find(command.todo_id))
+            .get_result::<TodoRow>(&mut conn)
+            .optional()
             .map_err(|e| AppError::Storage(e.into()))?
             .ok_or(AppError::NotFound)?;
         row.try_into()

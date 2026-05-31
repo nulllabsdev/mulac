@@ -35,27 +35,24 @@ mod models {
 
 mod handler {
     use super::models::{TodoDueDateChanged, UpdateDueDateCommand};
-    use crate::assembly::io::{TodoEvent, block_on_blocking};
+    use crate::assembly::io::{DbPool, TodoEvent};
     use kernel::{CommandError, CommandHandlerPort};
-    use sqlx::PgPool;
 
     pub struct UpdateDueDateHandler {
-        pool: PgPool,
+        pool: DbPool,
     }
 
     impl UpdateDueDateHandler {
-        pub fn new(pool: PgPool) -> Self {
+        pub fn new(pool: DbPool) -> Self {
             Self { pool }
         }
     }
 
     impl CommandHandlerPort<UpdateDueDateCommand, TodoEvent> for UpdateDueDateHandler {
         fn execute(&self, command: UpdateDueDateCommand) -> Result<Vec<TodoEvent>, CommandError> {
-            let pool = self.pool.clone();
-            let todo = block_on_blocking(async move {
-                super::infra_sqlx_pg::set_due_date(&pool, command.todo_id, command.due_at).await
-            })
-            .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
+            let todo =
+                super::infra_diesel::set_due_date(&self.pool, command.todo_id, command.due_at)
+                    .map_err(|e| CommandError::HandlerExecution(e.to_string()))?;
 
             Ok(vec![TodoEvent::TodoDueDateChanged(TodoDueDateChanged {
                 todo,
@@ -64,27 +61,25 @@ mod handler {
     }
 }
 
-mod infra_sqlx_pg {
-    use crate::assembly::io::{AppError, Clock, TodoDto, TodoRow};
+mod infra_diesel {
+    use crate::assembly::io::{AppError, Clock, DbPool, TodoDto, TodoRow};
+    use crate::schema::todos;
     use chrono::{DateTime, Utc};
-    use sqlx::PgPool;
+    use diesel::prelude::*;
     use uuid::Uuid;
-    pub async fn set_due_date(
-        pool: &PgPool,
+
+    pub fn set_due_date(
+        pool: &DbPool,
         id: Uuid,
         due_at: Option<DateTime<Utc>>,
     ) -> Result<TodoDto, AppError> {
-        let sql = "UPDATE todos SET due_at = $2, updated_at = $3 WHERE id = $1 RETURNING id, title, description, status, created_at, updated_at, due_at";
-
-        let row = sqlx::query_as::<_, TodoRow>(sql)
-            .bind(id)
-            .bind(due_at)
-            .bind(Clock::now())
-            .fetch_optional(pool)
-            .await
+        let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+        let row = diesel::update(todos::table.find(id))
+            .set((todos::due_at.eq(due_at), todos::updated_at.eq(Clock::now())))
+            .get_result::<TodoRow>(&mut conn)
+            .optional()
             .map_err(|e| AppError::Storage(e.into()))?
             .ok_or(AppError::NotFound)?;
-
         row.try_into()
     }
 }
@@ -95,7 +90,7 @@ mod http {
         AppState,
         assembly::io::{
             ApiError, AppCommand, MulacState, NewCommandEnvelope, TodoDto, fetch_todo,
-            interpret_dispatch_error,
+            interpret_dispatch_error, run_blocking,
         },
         //
     };
@@ -145,7 +140,10 @@ mod http {
             Json(request): Json<UpdateDueDateRequest>,
         ) -> Result<Json<TodoDto>, ApiError> {
             dispatch_update_due_date(&state.mulac, id.0, request.due_at)?;
-            Ok(Json(fetch_todo(&state.pool, id.0).await?))
+            let pool = state.pool.clone();
+            let id = id.0;
+            let todo = run_blocking(move || fetch_todo(&pool, id)).await?;
+            Ok(Json(todo))
         }
     }
 }

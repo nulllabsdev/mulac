@@ -6,11 +6,12 @@ edition = "2024"
 [dependencies]
 anyhow = "1"
 chrono = { version = "0.4", features = ["serde", "clock"] }
+diesel = { version = "2", features = ["postgres", "r2d2", "uuid", "chrono", "serde_json"] }
+diesel_migrations = "2"
 poem = "3"
 poem-openapi = { version = "5", features = ["swagger-ui", "uuid", "chrono"] }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
-sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls", "postgres", "uuid", "chrono", "json", "migrate", "macros", "derive"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal"] }
 tokio-util = "0.7"

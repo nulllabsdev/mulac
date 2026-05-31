@@ -1,9 +1,8 @@
 mod utils;
 use serde_json::json;
-use test_app_todo::io::TodoRow;
 use utils::{
-    assert_command_completed, assert_event_completed, assert_not_found_response,
-    assert_ok_response, assert_outbox_pending, start_test_app,
+    TodoRow, assert_command_completed, assert_event_completed, assert_not_found_response,
+    assert_ok_response, assert_outbox_pending, fetch_todo_row, start_test_app,
 };
 use uuid::Uuid;
 
@@ -54,13 +53,7 @@ async fn update_due_date_emits_event() {
     assert_command_completed(&pool, "UpdateDueDate").await;
     assert_event_completed(&pool, "TodoDueDateChanged").await;
 
-    let row = sqlx::query_as::<_, TodoRow>(
-        "SELECT id, title, description, status, created_at, updated_at, due_at FROM todos WHERE id = $1",
-    )
-    .bind(todo_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: TodoRow = fetch_todo_row(&pool, todo_id).await;
     assert!(row.due_at.is_some());
     assert!(row.due_at.unwrap().to_string().contains("2026-12-31"));
 }

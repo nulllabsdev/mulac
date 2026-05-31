@@ -20,10 +20,10 @@ use test_app_todo::io::{
     OutboxApi,
     ReopenApi,
     UpdateApi,
-    connect,
-    migrate,
+    build_pool,
     run_command_worker,
     run_event_worker,
+    run_migrations,
     start_mulac, //
 };
 
@@ -43,22 +43,21 @@ async fn main() -> anyhow::Result<()> {
     let database_url = env::var("DATABASE_URL").expect("DATABASE_URL must be set");
 
     match command.as_str() {
-        // Run pending sqlx migrations and exit — useful for one-shot init containers.
+        // Run pending diesel migrations and exit — useful for one-shot init containers.
         "migrate" => {
-            let pool = connect(&database_url).await?;
-            migrate(&pool).await?;
+            run_migrations(&database_url)?;
             println!("migrations applied");
         }
 
         "serve" => {
             let bind_addr = env::var("BIND_ADDR").unwrap_or_else(|_| "127.0.0.1:33001".to_string());
 
-            // Connect and migrate on startup so the binary is self-contained.
-            let pool = connect(&database_url).await?;
-            migrate(&pool).await?;
+            // Build the connection pool and migrate on startup so the binary is self-contained.
+            run_migrations(&database_url)?;
+            let pool = build_pool(&database_url)?;
 
             // Boot the in-process kernel and register all command handlers and event subscribers.
-            let kernel = start_mulac(pool.clone(), &database_url).await?;
+            let kernel = start_mulac(pool.clone()).await?;
             let token = kernel.child_token();
             tokio::spawn(run_command_worker(kernel.command_consumer(), token.clone()));
             tokio::spawn(run_event_worker(kernel.event_consumer(), token));

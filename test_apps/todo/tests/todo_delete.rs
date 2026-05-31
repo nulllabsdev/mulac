@@ -2,7 +2,8 @@ mod utils;
 use serde_json::json;
 use utils::{
     assert_command_completed, assert_event_completed, assert_no_content_response,
-    assert_not_found_response, assert_ok_response, assert_outbox_pending, client, start_test_app,
+    assert_not_found_response, assert_ok_response, assert_outbox_pending, client, count_todos,
+    start_test_app,
 };
 use uuid::Uuid;
 
@@ -57,11 +58,7 @@ async fn delete_todo_emits_event() {
     assert_command_completed(&pool, "DeleteTodo").await;
     assert_event_completed(&pool, "TodoDeleted").await;
 
-    let count = sqlx::query_scalar::<_, i64>("SELECT count(*) FROM todos WHERE id = $1")
-        .bind(todo_id)
-        .fetch_one(&pool)
-        .await
-        .unwrap();
+    let count = count_todos(&pool, todo_id).await;
     assert_eq!(count, 0, "todo row should be absent after delete");
 }
 

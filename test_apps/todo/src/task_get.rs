@@ -1,17 +1,16 @@
-mod infra_sqlx_pg {
-    use crate::assembly::io::{AppError, TodoDto, fetch_todo};
-    use sqlx::PgPool;
+mod infra_diesel {
+    use crate::assembly::io::{AppError, DbPool, TodoDto, fetch_todo};
     use uuid::Uuid;
 
-    pub async fn get(pool: &PgPool, id: Uuid) -> Result<TodoDto, AppError> {
-        fetch_todo(pool, id).await
+    pub fn get(pool: &DbPool, id: Uuid) -> Result<TodoDto, AppError> {
+        fetch_todo(pool, id)
     }
 }
 
 mod http {
     use crate::{
         AppState,
-        assembly::io::{ApiError, TodoDto},
+        assembly::io::{ApiError, TodoDto, run_blocking},
         //
     };
     use poem::web::Data;
@@ -28,7 +27,10 @@ mod http {
             state: Data<&AppState>,
             id: Path<Uuid>,
         ) -> Result<Json<TodoDto>, ApiError> {
-            Ok(Json(super::infra_sqlx_pg::get(&state.pool, id.0).await?))
+            let pool = state.pool.clone();
+            let id = id.0;
+            let todo = run_blocking(move || super::infra_diesel::get(&pool, id)).await?;
+            Ok(Json(todo))
         }
     }
 }

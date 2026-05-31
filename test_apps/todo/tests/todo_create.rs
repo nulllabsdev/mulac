@@ -1,7 +1,7 @@
 mod utils;
 use serde_json::json;
-use test_app_todo::io::TodoRow;
 use utils::{
+    TodoRow,
     assert_bad_request_response,
     assert_command_completed,
     assert_event_completed,
@@ -11,6 +11,7 @@ use utils::{
     fetch_event_entries,
     fetch_inbox,
     fetch_outbox,
+    fetch_todo_row,
     start_test_app, //
 };
 use uuid::Uuid;
@@ -42,13 +43,7 @@ async fn create_todo_returns_todo() {
     assert!(body["created_at"].is_string());
 
     let todo_id: Uuid = body["id"].as_str().unwrap().parse().unwrap();
-    let row = sqlx::query_as::<_, TodoRow>(
-        "SELECT id, title, description, status, created_at, updated_at, due_at FROM todos WHERE id = $1",
-    )
-    .bind(todo_id)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
+    let row: TodoRow = fetch_todo_row(&pool, todo_id).await;
 
     assert_eq!(row.id, todo_id);
     assert_eq!(row.title, "Buy milk");

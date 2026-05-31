@@ -1,4 +1,6 @@
 mod assembly;
+#[allow(unused)]
+mod schema;
 mod task_complete;
 mod task_create;
 mod task_delete;
@@ -37,16 +39,14 @@ impl ApplicationEvent for TodoEvent {
     }
 }
 
-use sqlx::PgPool;
-
 #[derive(Clone)]
 pub struct AppState {
-    pub pool: PgPool,
+    pub pool: assembly::io::DbPool,
     pub mulac: assembly::io::MulacState,
 }
 
 impl AppState {
-    pub fn new(pool: PgPool, mulac: assembly::io::MulacState) -> Self {
+    pub fn new(pool: assembly::io::DbPool, mulac: assembly::io::MulacState) -> Self {
         Self { pool, mulac }
     }
 }
@@ -131,36 +131,38 @@ mod inbox {
             AppError,
             Clock,
             Command,
+            DbPool,
             MulacState,
             NewCommandEnvelope,
             fetch_todo,
+            run_blocking,
             //
         };
         use kernel::NewCommandMetadata;
         use poem::web::Data;
         use poem_openapi::{OpenApi, payload::Json};
-        use sqlx::PgPool;
         use uuid::Uuid;
 
-        async fn record_received(
-            pool: &PgPool,
-            envelope: &CommandEnvelope,
-        ) -> Result<(), AppError> {
-            let sql = "INSERT INTO inbox_messages (id, message_type, payload, status, received_at) VALUES ($1, $2, $3, 'received', $4) ON CONFLICT (id) DO NOTHING";
+        fn record_received(pool: &DbPool, envelope: &CommandEnvelope) -> Result<(), AppError> {
+            use crate::schema::inbox_messages;
+            use diesel::prelude::*;
 
-            let result = sqlx::query(sql)
-                .bind(envelope.id)
-                .bind(envelope.command.message_type())
-                .bind(
-                    serde_json::to_value(&envelope.command)
-                        .map_err(|e| AppError::Storage(e.into()))?,
-                )
-                .bind(Clock::now())
-                .execute(pool)
-                .await
+            let payload =
+                serde_json::to_value(&envelope.command).map_err(|e| AppError::Storage(e.into()))?;
+            let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+            let inserted = diesel::insert_into(inbox_messages::table)
+                .values((
+                    inbox_messages::id.eq(envelope.id),
+                    inbox_messages::message_type.eq(envelope.command.message_type()),
+                    inbox_messages::payload.eq(payload),
+                    inbox_messages::status.eq("received"),
+                    inbox_messages::received_at.eq(Clock::now()),
+                ))
+                .on_conflict_do_nothing()
+                .execute(&mut conn)
                 .map_err(|e| AppError::Storage(e.into()))?;
 
-            if result.rows_affected() == 0 {
+            if inserted == 0 {
                 return Err(AppError::Conflict(format!(
                     "message {} was already received",
                     envelope.id
@@ -169,31 +171,34 @@ mod inbox {
             Ok(())
         }
 
-        async fn mark_processed(pool: &PgPool, message_id: Uuid) -> Result<(), AppError> {
-            let sql = "UPDATE inbox_messages SET status = 'processed', processed_at = $2, error = NULL WHERE id = $1";
+        fn mark_processed(pool: &DbPool, message_id: Uuid) -> Result<(), AppError> {
+            use crate::schema::inbox_messages;
+            use diesel::prelude::*;
 
-            sqlx::query(sql)
-                .bind(message_id)
-                .bind(Clock::now())
-                .execute(pool)
-                .await
+            let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+            diesel::update(inbox_messages::table.find(message_id))
+                .set((
+                    inbox_messages::status.eq("processed"),
+                    inbox_messages::processed_at.eq(Clock::now()),
+                    inbox_messages::error.eq(None::<String>),
+                ))
+                .execute(&mut conn)
                 .map_err(|e| AppError::Storage(e.into()))?;
             Ok(())
         }
 
-        async fn mark_failed(
-            pool: &PgPool,
-            message_id: Uuid,
-            error: &AppError,
-        ) -> Result<(), AppError> {
-            let sql = "UPDATE inbox_messages SET status = 'failed', processed_at = $2, error = $3 WHERE id = $1";
+        fn mark_failed(pool: &DbPool, message_id: Uuid, error: &AppError) -> Result<(), AppError> {
+            use crate::schema::inbox_messages;
+            use diesel::prelude::*;
 
-            sqlx::query(sql)
-                .bind(message_id)
-                .bind(Clock::now())
-                .bind(error.to_string())
-                .execute(pool)
-                .await
+            let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+            diesel::update(inbox_messages::table.find(message_id))
+                .set((
+                    inbox_messages::status.eq("failed"),
+                    inbox_messages::processed_at.eq(Clock::now()),
+                    inbox_messages::error.eq(error.to_string()),
+                ))
+                .execute(&mut conn)
                 .map_err(|e| AppError::Storage(e.into()))?;
             Ok(())
         }
@@ -248,22 +253,28 @@ mod inbox {
                 state: Data<&AppState>,
                 Json(command): Json<CommandEnvelope>,
             ) -> Result<Json<InboundResponse>, ApiError> {
-                record_received(&state.pool, &command).await?;
+                let pool = state.pool.clone();
+                let mulac = state.mulac.clone();
                 let message_id = command.id;
-                let todo_id = match dispatch_inbound_command(&state.mulac, &command) {
-                    Ok(todo_id) => {
-                        mark_processed(&state.pool, message_id).await?;
-                        todo_id
-                    }
-                    Err(error) => {
-                        mark_failed(&state.pool, message_id, &error).await?;
-                        return Err(error.into());
-                    }
-                };
-                Ok(Json(InboundResponse {
-                    message_id,
-                    todo: fetch_todo(&state.pool, todo_id).await?,
-                }))
+                let response = run_blocking(move || {
+                    record_received(&pool, &command)?;
+                    let todo_id = match dispatch_inbound_command(&mulac, &command) {
+                        Ok(todo_id) => {
+                            mark_processed(&pool, message_id)?;
+                            todo_id
+                        }
+                        Err(error) => {
+                            mark_failed(&pool, message_id, &error)?;
+                            return Err(error);
+                        }
+                    };
+                    Ok(InboundResponse {
+                        message_id,
+                        todo: fetch_todo(&pool, todo_id)?,
+                    })
+                })
+                .await?;
+                Ok(Json(response))
             }
         }
     }
@@ -278,7 +289,6 @@ mod outbox {
         use chrono::{DateTime, Utc};
         use poem_openapi::Object;
         use serde::{Deserialize, Serialize};
-        use sqlx::FromRow;
         use uuid::Uuid;
 
         #[derive(Debug, Clone, Serialize, Deserialize, Object)]
@@ -292,7 +302,7 @@ mod outbox {
             pub attempts: i32,
         }
 
-        #[derive(Debug, FromRow)]
+        #[derive(Debug, diesel::Queryable)]
         pub struct OutboxRow {
             pub id: Uuid,
             pub event_type: String,
@@ -318,26 +328,29 @@ mod outbox {
         }
     }
 
-    mod infra_sqlx_pg {
+    mod infra_diesel {
         use super::models::{OutboxMessageDto, OutboxRow};
-        use crate::assembly::io::AppError;
-        use sqlx::PgPool;
+        use crate::assembly::io::{AppError, DbPool};
+        use crate::schema::outbox_messages;
+        use diesel::prelude::*;
 
-        pub async fn list(pool: &PgPool) -> Result<Vec<OutboxMessageDto>, AppError> {
-            let sql = "SELECT id, event_type, payload, status, created_at, published_at, attempts FROM outbox_messages ORDER BY created_at ASC";
-
-            let rows = sqlx::query_as::<_, OutboxRow>(sql)
-                .fetch_all(pool)
-                .await
+        pub fn list(pool: &DbPool) -> Result<Vec<OutboxMessageDto>, AppError> {
+            let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
+            let rows = outbox_messages::table
+                .order(outbox_messages::created_at.asc())
+                .load::<OutboxRow>(&mut conn)
                 .map_err(|e| AppError::Storage(e.into()))?;
             Ok(rows.into_iter().map(Into::into).collect())
         }
     }
 
     mod http {
-        use super::infra_sqlx_pg::list;
+        use super::infra_diesel::list;
         use super::models::OutboxMessageDto;
-        use crate::{AppState, assembly::io::ApiError};
+        use crate::{
+            AppState,
+            assembly::io::{ApiError, run_blocking},
+        };
         use poem::web::Data;
         use poem_openapi::{OpenApi, payload::Json};
 
@@ -350,7 +363,9 @@ mod outbox {
                 &self,
                 state: Data<&AppState>,
             ) -> Result<Json<Vec<OutboxMessageDto>>, ApiError> {
-                Ok(Json(list(&state.pool).await?))
+                let pool = state.pool.clone();
+                let messages = run_blocking(move || list(&pool)).await?;
+                Ok(Json(messages))
             }
         }
     }
@@ -368,6 +383,7 @@ pub mod io {
         AppCommand,
         AppError,
         Command,
+        DbPool,
         ErrorBody,
         MulacHandle,
         MulacState,
@@ -378,13 +394,14 @@ pub mod io {
         TodoRow,
         TodoStatus,
         block_on_blocking,
-        connect,
+        build_pool,
         fetch_todo,
         interpret_dispatch_error,
-        migrate,
         record_event_payload,
+        run_blocking,
         run_command_worker,
         run_event_worker,
+        run_migrations,
         start_mulac,
         validate_title,
         //

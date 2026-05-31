@@ -23,22 +23,23 @@ impl FilterStatus {
     }
 }
 
-mod infra_sqlx_pg {
-    use crate::assembly::io::{AppError, TodoDto, TodoList, TodoRow};
+mod infra_diesel {
+    use crate::assembly::io::{AppError, DbPool, TodoDto, TodoList, TodoRow};
+    use crate::schema::todos;
     use crate::task_list::FilterStatus;
-    use sqlx::PgPool;
+    use diesel::prelude::*;
 
-    pub async fn list(pool: &PgPool, status: Option<FilterStatus>) -> Result<TodoList, AppError> {
-        let sql_filtered = "SELECT id, title, description, status, created_at, updated_at, due_at FROM todos WHERE status = $1 ORDER BY created_at ASC";
-        let sql_all = "SELECT id, title, description, status, created_at, updated_at, due_at FROM todos ORDER BY created_at ASC";
+    pub fn list(pool: &DbPool, status: Option<FilterStatus>) -> Result<TodoList, AppError> {
+        let mut conn = pool.get().map_err(|e| AppError::Storage(e.into()))?;
 
-        let rows = if let Some(status) = status.and_then(FilterStatus::as_todo_status) {
-            sqlx::query_as::<_, TodoRow>(sql_filtered)
-                .bind(status.as_str())
-                .fetch_all(pool)
-                .await
-        } else {
-            sqlx::query_as::<_, TodoRow>(sql_all).fetch_all(pool).await
+        let rows = match status.and_then(FilterStatus::as_todo_status) {
+            Some(status) => todos::table
+                .filter(todos::status.eq(status.as_str()))
+                .order(todos::created_at.asc())
+                .load::<TodoRow>(&mut conn),
+            None => todos::table
+                .order(todos::created_at.asc())
+                .load::<TodoRow>(&mut conn),
         }
         .map_err(|e| AppError::Storage(e.into()))?;
 
@@ -52,7 +53,7 @@ mod infra_sqlx_pg {
 
 mod http {
     use crate::AppState;
-    use crate::assembly::io::{ApiError, TodoList};
+    use crate::assembly::io::{ApiError, TodoList, run_blocking};
     use crate::task_list::FilterStatus;
     use poem::web::Data;
     use poem_openapi::{OpenApi, param::Query, payload::Json};
@@ -67,9 +68,10 @@ mod http {
             state: Data<&AppState>,
             status: Query<Option<FilterStatus>>,
         ) -> Result<Json<TodoList>, ApiError> {
-            Ok(Json(
-                super::infra_sqlx_pg::list(&state.pool, status.0).await?,
-            ))
+            let pool = state.pool.clone();
+            let status = status.0;
+            let list = run_blocking(move || super::infra_diesel::list(&pool, status)).await?;
+            Ok(Json(list))
         }
     }
 }

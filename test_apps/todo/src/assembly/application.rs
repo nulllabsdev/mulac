@@ -1,5 +1,6 @@
 use super::domain::{TodoDto, TodoStatus};
-use super::infra_sqlx_pg::entity::TodoRow;
+use super::infra_diesel::DbPool;
+use super::infra_diesel::entity::TodoRow;
 use crate::task_complete::io::{COMPLETE_TODO_COMMAND, CompleteTodoCommand};
 use crate::task_create::io::{CREATE_TODO_COMMAND, CreateTodoCommand};
 use crate::task_delete::io::{DELETE_TODO_COMMAND, DeleteTodoCommand};
@@ -155,10 +156,7 @@ pub type NewCommandEnvelope = kernel::NewCommandEnvelope<AppCommand>;
 pub type MulacState = kernel::PersistentKernelState;
 pub type MulacHandle = kernel::PersistentKernelHandle;
 
-pub async fn start_mulac(
-    pool: sqlx::PgPool,
-    database_url: &str,
-) -> Result<MulacHandle, kernel::KernelError> {
+pub async fn start_mulac(db_pool: DbPool) -> Result<MulacHandle, kernel::KernelError> {
     use crate::assembly::io::OutboxSubscriber;
     use crate::task_complete::io::{CompleteTodoHandler, TODO_COMPLETED_EVENT};
     use crate::task_create::io::{CreateTodoHandler, TODO_CREATED_EVENT};
@@ -167,65 +165,80 @@ pub async fn start_mulac(
     use crate::task_schedule_due_dates::io::{TODO_DUE_DATE_CHANGED_EVENT, UpdateDueDateHandler};
     use crate::task_update::io::{TODO_UPDATED_EVENT, UpdateTodoHandler};
 
-    let db_pool = kernel::io::build_pool(database_url)
-        .map_err(|e| kernel::KernelError::Database(e.to_string()))?;
-
     kernel::boot(kernel::KernelConfig::default())
         .command_handler(
             CREATE_TODO_COMMAND,
-            Arc::new(CreateTodoHandler::new(pool.clone())),
+            Arc::new(CreateTodoHandler::new(db_pool.clone())),
         )
         .command_handler(
             COMPLETE_TODO_COMMAND,
-            Arc::new(CompleteTodoHandler::new(pool.clone())),
+            Arc::new(CompleteTodoHandler::new(db_pool.clone())),
         )
         .command_handler(
             REOPEN_TODO_COMMAND,
-            Arc::new(ReopenTodoHandler::new(pool.clone())),
+            Arc::new(ReopenTodoHandler::new(db_pool.clone())),
         )
         .command_handler(
             UPDATE_TODO_COMMAND,
-            Arc::new(UpdateTodoHandler::new(pool.clone())),
+            Arc::new(UpdateTodoHandler::new(db_pool.clone())),
         )
         .command_handler(
             DELETE_TODO_COMMAND,
-            Arc::new(DeleteTodoHandler::new(pool.clone())),
+            Arc::new(DeleteTodoHandler::new(db_pool.clone())),
         )
         .command_handler(
             UPDATE_DUE_DATE_COMMAND,
-            Arc::new(UpdateDueDateHandler::new(pool.clone())),
+            Arc::new(UpdateDueDateHandler::new(db_pool.clone())),
         )
         .event_subscriber(
             TODO_CREATED_EVENT,
             "todo-created-outbox",
-            Arc::new(OutboxSubscriber::new(pool.clone())) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .event_subscriber(
             TODO_COMPLETED_EVENT,
             "todo-completed-outbox",
-            Arc::new(OutboxSubscriber::new(pool.clone())) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .event_subscriber(
             TODO_REOPENED_EVENT,
             "todo-reopened-outbox",
-            Arc::new(OutboxSubscriber::new(pool.clone())) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .event_subscriber(
             TODO_UPDATED_EVENT,
             "todo-updated-outbox",
-            Arc::new(OutboxSubscriber::new(pool.clone())) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .event_subscriber(
             TODO_DUE_DATE_CHANGED_EVENT,
             "todo-due-date-changed-outbox",
-            Arc::new(OutboxSubscriber::new(pool.clone())) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .event_subscriber(
             TODO_DELETED_EVENT,
             "todo-deleted-outbox",
-            Arc::new(OutboxSubscriber::new(pool)) as Arc<dyn kernel::EventSubscriberPort>,
+            Arc::new(OutboxSubscriber::new(db_pool.clone()))
+                as Arc<dyn kernel::EventSubscriberPort>,
         )
         .start_persistent(db_pool, 1)
 }
 
 pub use kernel::io::{block_on_blocking, run_command_worker, run_event_worker};
+
+/// Run a blocking (diesel) closure on Tokio's blocking thread pool so it does
+/// not stall the async runtime. Used by the async HTTP handlers.
+pub async fn run_blocking<F, T>(f: F) -> Result<T, AppError>
+where
+    F: FnOnce() -> Result<T, AppError> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::task::spawn_blocking(f)
+        .await
+        .map_err(|e| AppError::Storage(anyhow::anyhow!("blocking task join failed: {e}")))?
+}
