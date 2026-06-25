@@ -60,4 +60,4 @@ jobs:
             test_apps/todo -> test_apps/todo/target
 
       - name: Run todo app tests
-        run: cargo test --locked
+        run: cargo test
