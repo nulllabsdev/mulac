@@ -1,3 +1,6 @@
 target/
 Cargo.lock
+# Track lockfiles for the binary test apps so CI can build with --locked.
+!test_apps/todo/Cargo.lock
+!test_apps/twitter/Cargo.lock
 .idea/

@@ -1,0 +1,63 @@
+name: test app todo
+
+on:
+  workflow_dispatch:
+  push:
+    paths:
+      - ".github/workflows/test-app-todo.yml"
+      - "kernel/**"
+      - "kernel_derive/**"
+      - "libs/**"
+      - "test_apps/todo/**"
+  pull_request:
+    paths:
+      - ".github/workflows/test-app-todo.yml"
+      - "kernel/**"
+      - "kernel_derive/**"
+      - "libs/**"
+      - "test_apps/todo/**"
+
+jobs:
+  test:
+    name: test todo app
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_DB: todo
+          POSTGRES_PASSWORD: todo
+          POSTGRES_USER: todo
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U todo -d todo"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 5
+
+    env:
+      CARGO_TERM_COLOR: always
+      DATABASE_URL: postgres://todo:todo@127.0.0.1:5432/todo
+
+    defaults:
+      run:
+        working-directory: test_apps/todo
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache Cargo artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: |
+            test_apps/todo -> test_apps/todo/target
+
+      - name: Run todo app tests
+        run: cargo test --locked
