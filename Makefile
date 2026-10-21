@@ -1,6 +1,8 @@
-.PHONY: all
+.PHONY: all fmt check test test-libs test-apps
 
 CARGO_DIRS := $(shell find . -name Cargo.toml -not -path '*/target/*' -exec dirname {} \; | sort)
+LIB_DIRS   := $(filter-out ./test_apps/%,$(CARGO_DIRS))
+APP_DIRS   := $(filter     ./test_apps/%,$(CARGO_DIRS))
 
 KERNEL_VERSION := $(shell cargo pkgid --manifest-path kernel/Cargo.toml | sed 's/.*[#@]//')
 LIBS_VERSION   := $(shell awk -F'"' '/^version/{print $$2; exit}' libs/Cargo.toml)
@@ -17,11 +19,12 @@ define run-fmt-in-crates
 	done
 endef
 
-define run-in-crates
+# $(1) = space-separated crate dirs, $(2) = cargo subcommand (+ flags)
+define run-in-dirs
 	@set -e; \
-	for dir in $(CARGO_DIRS); do \
+	for dir in $(1); do \
 		echo "== $$dir =="; \
-		cargo $(1) --manifest-path "$$dir/Cargo.toml"; \
+		cargo $(2) --manifest-path "$$dir/Cargo.toml"; \
 	done
 endef
 
@@ -29,10 +32,19 @@ fmt:
 	$(call run-fmt-in-crates)
 
 check:
-	$(call run-in-crates,check)
+	$(call run-in-dirs,$(CARGO_DIRS),check)
 
+# Run every crate, including the DB-backed test apps (needs Postgres).
 test:
-	$(call run-in-crates,test --all-features)
+	$(call run-in-dirs,$(CARGO_DIRS),test --all-features)
+
+# Library crates only (kernel + libs); no database required.
+test-libs:
+	$(call run-in-dirs,$(LIB_DIRS),test --all-features)
+
+# Test apps only (todo, twitter); needs Postgres running.
+test-apps:
+	$(call run-in-dirs,$(APP_DIRS),test --all-features)
 
 MARGO_PROJECT := /home/nulllabs/work/labs/margo
 

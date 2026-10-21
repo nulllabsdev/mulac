@@ -10,24 +10,6 @@ jobs:
   test:
     runs-on: ubuntu-latest
 
-    # `make test` runs the test_apps (todo, twitter) which need a live
-    # Postgres. Mirror test_apps/docker-compose.yml: superuser postgres,
-    # exposed on host port 5433 (the port baked into each app's .env).
-    services:
-      postgres:
-        image: postgres:16-alpine
-        env:
-          POSTGRES_USER: postgres
-          POSTGRES_PASSWORD: postgres
-          POSTGRES_DB: postgres
-        ports:
-          - 5433:5432
-        options: >-
-          --health-cmd "pg_isready -U postgres"
-          --health-interval 5s
-          --health-timeout 3s
-          --health-retries 20
-
     steps:
       - uses: actions/checkout@v4
 
@@ -37,10 +19,6 @@ jobs:
         with:
           workspaces: |
             . -> target
-            test_apps -> target
-
-      - name: Seed test_app databases
-        run: psql "postgres://postgres:postgres@127.0.0.1:5433/postgres" -v ON_ERROR_STOP=1 -f test_apps/init.sql
 
       - name: Format check
         run:  make fmt
@@ -48,5 +26,7 @@ jobs:
       - name: Check workspace
         run: make check
 
-      - name: Test workspace
-        run: make test
+      # Library crates only (kernel + libs). The DB-backed test apps run in
+      # their own workflows (test-app-todo.yml, test-app-twitter.yml).
+      - name: Test libraries
+        run: make test-libs
