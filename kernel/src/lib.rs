@@ -6,7 +6,10 @@ pub mod io {
     pub use super::command_handler_registry::CommandHandlerRegistry;
     pub use super::event_subscriber_registry::EventSubscriberRegistry;
     pub use super::workers::{run_command_worker, run_event_worker};
-    pub use super::{block_on_blocking, first_command_error, first_event_error};
+    pub use super::{
+        KernelBuilder, KernelConfig, KernelError, block_on_blocking, boot, first_command_error,
+        first_event_error,
+    };
     pub use commanding::io::{
         CommandConsumer,
         CommandConsumerRepository,
@@ -38,9 +41,14 @@ pub mod io {
         ReservableEventSpec, //
     };
     pub use inbox::io::{
+        InboundMessageEnvelope,
         InboxConsumer,
         InboxConsumerRepository,
         InboxConsumerStorage,
+        InboxError,
+        InboxStorePort,
+        InboxStoreStorage,
+        NewInboxMessageEnvelope,
         ReservableInboxSpec, //
     };
 }
@@ -177,6 +185,7 @@ impl AppState {
 
 pub struct KernelBuilder {
     _config: KernelConfig,
+    inbox_store: Option<Arc<dyn InboxStorePort>>,
     command_handlers: Vec<(String, Arc<dyn ErasedCommandHandler>)>,
     event_subscribers: Vec<EventSubscriberRegistration>,
     outbox_subscribers: Vec<String>,
@@ -220,10 +229,21 @@ impl KernelBuilder {
     fn new(config: KernelConfig) -> Self {
         Self {
             _config: config,
+            inbox_store: None,
             command_handlers: Vec::new(),
             event_subscribers: Vec::new(),
             outbox_subscribers: Vec::new(),
         }
+    }
+
+    /// Supplies the inbox acceptance boundary used by [`Self::start`].
+    ///
+    /// Production stores must return success only after durable recording.
+    /// This option is rejected by [`Self::start_persistent`], which currently
+    /// assembles command and event processing only, not an inbox recorder.
+    pub fn inbox_store(mut self, store: Arc<dyn InboxStorePort>) -> Self {
+        self.inbox_store = Some(store);
+        self
     }
 
     pub fn command_handler<C, E>(
@@ -255,6 +275,11 @@ impl KernelBuilder {
         self
     }
 
+    /// Registers a subscriber factory for [`Self::start_persistent`].
+    ///
+    /// Direct startup rejects this registration: its command gateway depends on
+    /// the event subscriber registry, so it cannot supply the gateway while
+    /// constructing that registry.
     pub fn event_subscriber_with_command_gateway<F>(
         mut self,
         event_type: impl Into<String>,
@@ -273,43 +298,43 @@ impl KernelBuilder {
         self
     }
 
+    /// Requests automatic outbox recording, which is not implemented.
+    ///
+    /// Both startup modes reject this registration. Use [`Self::event_subscriber`]
+    /// with an application-owned, recorder-backed subscriber and an explicit
+    /// routing policy instead.
     pub fn outbox_subscriber(mut self, event_type: impl Into<String>) -> Self {
         self.outbox_subscribers.push(event_type.into());
         self
     }
 
+    /// Starts direct command and event dispatch with an explicitly supplied inbox store.
+    ///
+    /// Fails if the inbox store is missing or any registration is unsupported.
+    /// `KernelConfig` alone does not provision storage or AMQP infrastructure.
     pub async fn start(self) -> Result<KernelHandle, KernelError> {
         self.validate()?;
 
-        let mut subscribers: Vec<(String, String, Arc<dyn EventSubscriberPort>)> = self
-            .outbox_subscribers
-            .iter()
-            .map(|event_type| {
-                (
-                    event_type.clone(),
-                    OUTBOX_SUBSCRIBER.to_string(),
-                    Arc::new(NoopEventSubscriber) as Arc<dyn EventSubscriberPort>,
-                )
-            })
-            .collect();
-        subscribers.extend(self.event_subscribers.into_iter().map(
-            |registration| match registration {
+        let subscribers = self
+            .event_subscribers
+            .into_iter()
+            .map(|registration| match registration {
                 EventSubscriberRegistration::Direct {
                     event_type,
                     subscriber_name,
                     subscriber,
-                } => (event_type, subscriber_name, subscriber),
+                } => Ok((event_type, subscriber_name, subscriber)),
                 EventSubscriberRegistration::WithCommandGateway {
                     event_type,
                     subscriber_name,
                     ..
-                } => (
+                } => Err(KernelError::CommandGatewaySubscriberRequiresPersistence {
                     event_type,
-                    subscriber_name,
-                    Arc::new(NoopEventSubscriber) as Arc<dyn EventSubscriberPort>,
-                ),
-            },
-        ));
+                    subscriber: subscriber_name,
+                }),
+            })
+            .collect::<Result<Vec<_>, KernelError>>()?;
+        let inbox_store = self.inbox_store.ok_or(KernelError::InboxStoreRequired)?;
 
         let event_registry = Arc::new(EventSubscriberRegistry::from_subscribers(subscribers));
         let event_dispatcher = Arc::new(EventDispatcher::new(event_registry));
@@ -324,7 +349,7 @@ impl KernelBuilder {
         let command_gateway = Arc::new(CommandGateway::direct(command_dispatcher.clone()));
 
         let inbox_recorder = Arc::new(InboxRecorder::new(Arc::new(InboxRecorderRepository::new(
-            Arc::new(NoopInboxStore),
+            inbox_store,
         ))));
 
         let state = AppState {
@@ -341,12 +366,20 @@ impl KernelBuilder {
         })
     }
 
+    /// Assembles durable command and event processing using the supplied pool.
+    ///
+    /// Gateway-dependent subscriber factories are supported. Automatic outbox
+    /// registrations and the direct-mode inbox store option are rejected rather
+    /// than silently ignored. Workers and inbox ingestion remain application-owned.
     pub fn start_persistent(
         self,
         db_pool: io::DbPool,
         drain_rounds: usize,
     ) -> Result<PersistentKernelHandle, KernelError> {
         self.validate()?;
+        if self.inbox_store.is_some() {
+            return Err(KernelError::InboxStoreUnsupportedInPersistentMode);
+        }
 
         let command_registry =
             Arc::new(CommandHandlerRegistry::from_handlers(self.command_handlers));
@@ -357,19 +390,10 @@ impl KernelBuilder {
         )));
         let command_gateway = Arc::new(CommandGateway::two_phased(command_recorder));
 
-        let mut subscribers: Vec<(String, String, Arc<dyn EventSubscriberPort>)> = self
-            .outbox_subscribers
-            .iter()
-            .map(|event_type| {
-                (
-                    event_type.clone(),
-                    OUTBOX_SUBSCRIBER.to_string(),
-                    Arc::new(NoopEventSubscriber) as Arc<dyn EventSubscriberPort>,
-                )
-            })
-            .collect();
-        subscribers.extend(self.event_subscribers.into_iter().map(
-            |registration| match registration {
+        let subscribers = self
+            .event_subscribers
+            .into_iter()
+            .map(|registration| match registration {
                 EventSubscriberRegistration::Direct {
                     event_type,
                     subscriber_name,
@@ -384,8 +408,8 @@ impl KernelBuilder {
                     subscriber_name,
                     factory(command_gateway.clone()),
                 ),
-            },
-        ));
+            })
+            .collect();
 
         let event_registry = Arc::new(EventSubscriberRegistry::from_subscribers(subscribers));
         let event_dispatcher = Arc::new(EventDispatcher::new(event_registry));
@@ -455,6 +479,12 @@ impl KernelBuilder {
                     OUTBOX_SUBSCRIBER.into(),
                 ));
             }
+        }
+
+        if let Some(event_type) = self.outbox_subscribers.first() {
+            return Err(KernelError::OutboxSubscriberUnsupported {
+                event_type: event_type.clone(),
+            });
         }
 
         Ok(())
@@ -562,22 +592,6 @@ impl KernelHandle {
     }
 }
 
-struct NoopEventSubscriber;
-
-impl EventSubscriberPort for NoopEventSubscriber {
-    fn handle(&self, _envelope: &NewEventEnvelope) -> Result<(), EventError> {
-        Ok(())
-    }
-}
-
-struct NoopInboxStore;
-
-impl InboxStorePort for NoopInboxStore {
-    fn store(&self, _msg: NewInboxMessageEnvelope) -> Result<(), InboxError> {
-        Ok(())
-    }
-}
-
 pub fn first_command_error(errors: Vec<CommandError>) -> KernelError {
     match errors.into_iter().next() {
         Some(error) => KernelError::Command(error),
@@ -602,6 +616,23 @@ where
 
 #[derive(Debug, thiserror::Error)]
 pub enum KernelError {
+    #[error("direct startup requires an inbox store; configure KernelBuilder::inbox_store")]
+    InboxStoreRequired,
+    #[error(
+        "inbox_store is only supported by start(); configure inbox ingestion separately when using start_persistent()"
+    )]
+    InboxStoreUnsupportedInPersistentMode,
+    #[error(
+        "automatic outbox recording for event type '{event_type}' is not supported; register a recorder-backed event_subscriber instead"
+    )]
+    OutboxSubscriberUnsupported { event_type: String },
+    #[error(
+        "event subscriber '{subscriber}' for event type '{event_type}' requires start_persistent() to receive a command gateway"
+    )]
+    CommandGatewaySubscriberRequiresPersistence {
+        event_type: String,
+        subscriber: String,
+    },
     #[error("database connection failed: {0}")]
     Database(String),
     #[error("AMQP connection failed: {0}")]

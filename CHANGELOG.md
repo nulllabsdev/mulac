@@ -5,6 +5,25 @@ All notable changes to this project are documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Fixed
+
+- Kernel startup no longer installs successful no-op inbox stores or event
+  subscribers. Direct startup now requires an explicit `inbox_store`; its
+  recording errors propagate to callers.
+- Both startup modes reject the unimplemented `outbox_subscriber` shortcut.
+  Register a recorder-backed subscriber through `event_subscriber` instead.
+- Direct startup rejects gateway-dependent subscriber factories rather than
+  dropping them. These factories remain supported by `start_persistent`.
+
+### Changed
+
+- **Startup compatibility:** applications using `start()` must supply an inbox
+  store explicitly. `KernelConfig::database_url` does not provision one.
+  The direct-only inbox store option is rejected by `start_persistent`.
+  See [kernel startup contracts](kernel/SPEC.md) for supported configurations.
+
 ## [0.1.0] - 2026-05-24
 
 Initial release. mulac is a set of architecture building blocks for reliable
