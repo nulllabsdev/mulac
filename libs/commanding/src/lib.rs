@@ -39,6 +39,7 @@ pub mod io {
 
     // Application types and ports — commanding
     pub use crate::assembly::io::{
+        Command,
         CommandEnvelope,
         CommandError,
         CommandMetadata,
@@ -46,6 +47,7 @@ pub mod io {
         CommandStatus,
         CommandStorePort,
         ExtraInfo,
+        NewCommand,
         NewCommandEnvelope,
         NewCommandMetadata,
         UnknownCommandStatus,
@@ -64,7 +66,6 @@ pub mod io {
         CommandConsumerStorage,
         CommandEntry,
         CommandStoreStorage,
-        NewCommand,
         NewCommandEntry,
         //
     };

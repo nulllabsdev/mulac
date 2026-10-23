@@ -5,11 +5,11 @@ edition.workspace = true
 
 [features]
 default = ["diesel"]
-diesel = ["dep:diesel", "dep:mulac_diesel"]
+diesel = ["dep:diesel", "dep:mulac_diesel", "commanding/diesel"]
 amqp = ["diesel", "dep:lapin", "dep:futures-lite", "dep:tokio", "dep:tokio-util"]
 
 [dependencies]
-commanding = { path = "../commanding", version = "0.3.0", registry = "margo", package = "mulac-commanding" }
+commanding = { path = "../commanding", version = "0.3.0", registry = "margo", default-features = false, package = "mulac-commanding" }
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true

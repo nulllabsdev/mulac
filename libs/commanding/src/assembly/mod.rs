@@ -6,6 +6,7 @@ pub(crate) mod infra_diesel;
 
 pub mod io {
     pub use super::application::io::{
+        Command,
         CommandEnvelope,
         CommandError,
         CommandMetadata,
