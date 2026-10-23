@@ -46,6 +46,58 @@ test-libs:
 test-apps:
 	$(call run-in-dirs,$(APP_DIRS),test --all-features)
 
+CI_DIRS := libs kernel
+NEW_LIBS := inbox_api commanding_api eventing_api outbox_api mulac_poem mulac_axum
+LIBS_MANIFEST := --manifest-path libs/Cargo.toml
+# Opt-in adapter features; feature `<name>` enables the optional `<name>_api` crate.
+ADAPTER_FEATURES := commanding eventing outbox
+ADAPTERS := mulac_poem mulac_axum
+
+# Format, lint and test libs and kernel; test_apps need running infrastructure.
+# Existing crates still have clippy warnings, so only new crates deny them.
+ci:
+	@set -e; \
+	for dir in $(CI_DIRS); do \
+		echo "== $$dir =="; \
+		cargo fmt --all --check --manifest-path "$$dir/Cargo.toml"; \
+		cargo clippy --workspace --all-targets --all-features --manifest-path "$$dir/Cargo.toml"; \
+		cargo test --workspace --all-features --manifest-path "$$dir/Cargo.toml"; \
+	done; \
+	for crate in $(NEW_LIBS); do \
+		echo "== $$crate =="; \
+		cargo clippy --no-deps -p $$crate --all-targets --all-features $(LIBS_MANIFEST) -- -D warnings; \
+		cargo clippy --no-deps -p $$crate --all-targets --no-default-features $(LIBS_MANIFEST) -- -D warnings; \
+	done; \
+	echo "== dependency boundaries =="; \
+	if cargo tree -p inbox_api --no-default-features --features tokio -e normal $(LIBS_MANIFEST) | grep -q diesel; then \
+		echo "inbox_api without diesel must not depend on Diesel"; exit 1; fi; \
+	if cargo tree -p mulac_poem --all-features -e normal $(LIBS_MANIFEST) | grep -qE ' (axum|utoipa) '; then \
+		echo "mulac_poem must not depend on Axum"; exit 1; fi; \
+	if cargo tree -p mulac_axum --all-features -e normal $(LIBS_MANIFEST) | grep -qE ' poem'; then \
+		echo "mulac_axum must not depend on Poem"; exit 1; fi; \
+	if cargo tree -p mulac_axum -e normal $(LIBS_MANIFEST) | grep -q ' utoipa '; then \
+		echo "mulac_axum must not require utoipa"; exit 1; fi; \
+	if cargo tree -p outbox_api --all-features -e normal $(LIBS_MANIFEST) | grep -q ' lapin '; then \
+		echo "outbox_api must not depend on lapin"; exit 1; fi; \
+	for adapter in $(ADAPTERS); do \
+		if cargo tree -p $$adapter --all-features -e normal $(LIBS_MANIFEST) | grep -q ' lapin '; then \
+			echo "$$adapter must not depend on lapin"; exit 1; fi; \
+	done; \
+	for feature in $(ADAPTER_FEATURES); do \
+		api=$${feature}_api; \
+		echo "== adapter feature $$feature =="; \
+		if cargo tree -p $$api --no-default-features --features tokio -e normal $(LIBS_MANIFEST) | grep -q diesel; then \
+			echo "$$api must not depend on Diesel"; exit 1; fi; \
+		for adapter in $(ADAPTERS); do \
+			cargo clippy --no-deps -p $$adapter --all-targets --no-default-features --features $$feature $(LIBS_MANIFEST) -- -D warnings; \
+			if cargo tree -p $$adapter -e normal $(LIBS_MANIFEST) | grep -q " $$api v"; then \
+				echo "$$adapter must not include $$api by default"; exit 1; fi; \
+			if cargo tree -p $$adapter --no-default-features --features $$feature -e normal $(LIBS_MANIFEST) | grep -q diesel; then \
+				echo "$$adapter with only $$feature must not depend on Diesel"; exit 1; fi; \
+		done; \
+		cargo clippy --no-deps -p mulac_axum --all-targets --no-default-features --features $$feature,utoipa $(LIBS_MANIFEST) -- -D warnings; \
+	done
+
 MARGO_PROJECT := /home/nulllabs/work/labs/margo
 
 define publish-lib
@@ -65,6 +117,12 @@ publish:
 	$(call publish-lib,commanding,mulac-commanding)
 	$(call publish-lib,outbox,mulac-outbox)
 	$(call publish-lib,inbox,mulac-inbox)
+	$(call publish-lib,inbox_api,inbox_api)
+	$(call publish-lib,commanding_api,commanding_api)
+	$(call publish-lib,eventing_api,eventing_api)
+	$(call publish-lib,outbox_api,outbox_api)
+	$(call publish-lib,mulac_poem,mulac_poem)
+	$(call publish-lib,mulac_axum,mulac_axum)
 pack_and_publish:
 	cargo package --no-verify --manifest-path libs/mulac_diesel/Cargo.toml
 	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/mulac_diesel-$(LIBS_VERSION).crate
@@ -76,6 +134,18 @@ pack_and_publish:
 	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/mulac-outbox-$(LIBS_VERSION).crate
 	cargo package --no-verify --manifest-path libs/inbox/Cargo.toml
 	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/mulac-inbox-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/inbox_api/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/inbox_api-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/commanding_api/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/commanding_api-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/eventing_api/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/eventing_api-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/outbox_api/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/outbox_api-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/mulac_poem/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/mulac_poem-$(LIBS_VERSION).crate
+	cargo package --no-verify --manifest-path libs/mulac_axum/Cargo.toml
+	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/libs/target/package/mulac_axum-$(LIBS_VERSION).crate
 	cargo package --no-verify --manifest-path kernel/Cargo.toml
 	$(MAKE) -C $(MARGO_PROJECT) add CRATE=$(CURDIR)/kernel/target/package/mulac-kernel-$(KERNEL_VERSION).crate
 
