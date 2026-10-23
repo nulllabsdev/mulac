@@ -17,4 +17,4 @@ serde_json.workspace = true
 diesel = { workspace = true, optional = true }
 mulac_diesel = { workspace = true, optional = true }
 lapin = { workspace = true, optional = true }
-tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "time"], optional = true }
+tokio = { workspace = true, features = ["macros", "rt", "rt-multi-thread", "sync", "time"], optional = true }

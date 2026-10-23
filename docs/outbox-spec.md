@@ -17,7 +17,7 @@ domain  ←  application  ←  features  ←  infra adapters
 - **domain** (`assembly/domain.rs`): core models and status machine — no I/O, no external transport types
 - **application** (`assembly/application.rs`): port traits, event/outbound envelopes, and errors — no implementation
 - **features** (`record_events.rs`, `outbox_consumer.rs`, `stale_reservation_sweep.rs`): use-case orchestration — depends on ports only
-- **infra adapters** (`assembly/infra_diesel.rs`, `amqp_publisher.rs`): concrete I/O — depends on feature and application layers
+- **infra adapters** (`assembly/infra_diesel.rs`, `amqp_publisher.rs`, `confirmed_amqp_publisher.rs`): concrete I/O — depends on feature and application layers
 
 External callers import exclusively from `lib.rs` via the `io` re-export facade.
 
@@ -33,8 +33,10 @@ lib.rs (io facade)
   │                         OutboxPublisherPort
   ├─ assembly/infra_diesel  [feature = "diesel"]
   │    OutboxStoreStorage, OutboxConsumerStorage, DbPool
-  └─ amqp_publisher         [feature = "amqp"]
-       AmqpPublisher, AmqpPublishConfig
+  ├─ amqp_publisher         [feature = "amqp"]
+  │    AmqpPublisher, AmqpPublishConfig
+  └─ confirmed_amqp_publisher  [feature = "amqp"]
+       ConfirmedAmqpPublisher
 ```
 
 ## Components
@@ -93,6 +95,42 @@ Implements `OutboxPublisherPort` for AMQP.
 - Publishes the payload and required message properties.
 - Waits for publisher confirmation / broker acceptance before returning success.
 - Maps broker unavailability, negative confirmations, and channel failures to retriable `OutboxError::Transport` errors.
+
+### ConfirmedAmqpPublisher
+
+A strict `OutboxPublisherPort` for AMQP, also behind the `amqp` feature.
+`AmqpPublisher` keeps its behavior; choose this publisher when a message must
+not count as published unless the broker routed and confirmed it.
+
+- `ConfirmedAmqpPublisher::new(url, exchange)` does not connect and does not
+  validate the URL; lapin parses it on the first connection. Environment
+  parsing and URL policy stay with the application.
+- The connection and channel are opened lazily, with `confirm_select` once per
+  connection, reused after successful publishes and dropped after any failure,
+  so the next publish reconnects.
+- Every message is published with `mandatory: true` and persistent delivery
+  (`delivery_mode` 2). Properties: `message_id`, optional `correlation_id`,
+  the content type (default `application/json`) and the headers `event_id`,
+  `event_type` and optional `causation_id` and `source`.
+- Connecting and publishing are bounded by a timeout, 10 seconds by default
+  (`ConfirmedAmqpPublisher::DEFAULT_TIMEOUT`, `with_timeout`).
+- `publish` never creates a runtime. It needs a current Tokio runtime handle
+  and must run on that runtime's blocking pool, as `outbox_api`'s
+  `AsyncOutboxService` does.
+- Errors are fixed strings without broker diagnostics:
+
+| Outcome | Error |
+|---------|-------|
+| Connection, channel or publish failure, or an unparseable URL | `transport error: RabbitMQ connection or publication failed` |
+| Timeout | `transport error: RabbitMQ publication timed out` |
+| No current runtime | `transport error: RabbitMQ publication requires the application runtime` |
+| `Ack` with a returned (unroutable) message | `routing error: RabbitMQ returned an unroutable message` |
+| `Nack` | `publish error: RabbitMQ negatively acknowledged publication` |
+| Confirms not active | `publish error: RabbitMQ did not confirm publication` |
+
+The broker test is ignored by default; run it with
+`AMQP_URL_TEST=amqp://… cargo test -p mulac-outbox --features amqp -- --ignored`
+from `libs/`.
 
 ## Models
 
@@ -332,7 +370,7 @@ API crate never enables `amqp`.
 | Feature  | Adds                                                                |
 |----------|---------------------------------------------------------------------|
 | `diesel` | PostgreSQL storage adapters, schema mapping, JSONB metadata support |
-| `amqp`   | AMQP publisher adapter and broker confirmation handling             |
+| `amqp`   | `AmqpPublisher` and the strict `ConfirmedAmqpPublisher` (lapin, Tokio) |
 
 ## Examples
 
