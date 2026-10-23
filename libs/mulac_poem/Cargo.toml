@@ -1,0 +1,39 @@
+[package]
+name = "mulac_poem"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["diesel"]
+diesel = ["inbox_api/diesel", "outbox_api?/diesel"]
+commanding = ["dep:commanding_api"]
+eventing = ["dep:eventing_api"]
+outbox = ["dep:outbox_api"]
+
+[dependencies]
+commanding_api = { workspace = true, features = ["tokio"], optional = true }
+eventing_api = { workspace = true, features = ["tokio"], optional = true }
+inbox_api = { workspace = true, features = ["tokio"] }
+outbox_api = { workspace = true, features = ["tokio"], optional = true }
+poem = { version = "3", default-features = false }
+poem-openapi = { version = "5", default-features = false }
+serde.workspace = true
+serde_json.workspace = true
+
+[dev-dependencies]
+commanding_api = { workspace = true, features = ["testing", "tokio"] }
+eventing_api = { workspace = true, features = ["testing", "tokio"] }
+inbox = { path = "../inbox", package = "mulac-inbox" }
+inbox_api = { workspace = true, features = ["testing", "tokio"] }
+outbox = { path = "../outbox", package = "mulac-outbox" }
+outbox_api = { workspace = true, features = ["testing", "tokio"] }
+poem = { version = "3", features = ["test"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread"] }
+
+[[example]]
+name = "poem_inbox"
+required-features = ["diesel"]
+
+[[example]]
+name = "poem_outbox"
+required-features = ["diesel", "outbox"]

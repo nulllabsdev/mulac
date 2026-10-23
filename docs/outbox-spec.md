@@ -308,6 +308,25 @@ Applies to retriable `failed()` transitions caused by transport publication fail
 - Consumers downstream of the external transport must treat `message_id` as an idempotency key when possible. By default, `message_id` equals `event_id`, unless the event dispatcher supplied a distinct outbound message ID.
 - The outbox does not guarantee ordering across entries, destinations, retries, or concurrent consumers.
 
+## HTTP Batch Endpoint
+
+`POST /outbox/run` is provided by [`libs/outbox_api`](../libs/outbox_api) and
+exposed through the `outbox` feature of `mulac_poem` and `mulac_axum`
+([ADR-010](adr/010-queue-http-apis.md)). It publishes one batch through
+`OutboxConsumer::publish_batch` with `ReservableOutboxSpec::new(limit)`:
+
+- `limit` is required, from `1` to `1000`; other values return `400`.
+- A processed batch returns `200` with `{"processed":N,"errors":[]}`. Any
+  failure sets `processed` to `null` and lists each `OutboxError` text in
+  `errors`; published entries stay completed.
+- Without a configured publisher, valid requests return `503`
+  `outbox publisher is not configured` and storage is not touched.
+- A failed blocking task returns `500` `queue processing task failed`.
+
+`OutboxService::from_postgres(pool, publisher)` assembles the consumer from
+`consumer_repository(pool)`. The publisher is any `OutboxPublisherPort`; the
+API crate never enables `amqp`.
+
 ## Feature Flags
 
 | Feature  | Adds                                                                |

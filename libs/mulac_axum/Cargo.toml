@@ -1,0 +1,64 @@
+[package]
+name = "mulac_axum"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["diesel"]
+diesel = ["inbox_api/diesel", "outbox_api?/diesel"]
+commanding = ["dep:commanding_api"]
+eventing = ["dep:eventing_api"]
+outbox = ["dep:outbox_api"]
+utoipa = ["dep:utoipa"]
+
+[dependencies]
+axum = { version = "0.8", default-features = false, features = ["json"] }
+commanding_api = { workspace = true, features = ["tokio"], optional = true }
+eventing_api = { workspace = true, features = ["tokio"], optional = true }
+inbox_api = { workspace = true, features = ["tokio"] }
+outbox_api = { workspace = true, features = ["tokio"], optional = true }
+serde_json.workspace = true
+utoipa = { version = "6", optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8", features = ["json", "tokio"] }
+commanding_api = { workspace = true, features = ["testing", "tokio"] }
+eventing_api = { workspace = true, features = ["testing", "tokio"] }
+http-body-util = "0.1"
+inbox = { path = "../inbox", package = "mulac-inbox" }
+inbox_api = { workspace = true, features = ["testing", "tokio"] }
+outbox_api = { workspace = true, features = ["testing", "tokio"] }
+tokio = { workspace = true, features = ["macros", "net", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+
+[[example]]
+name = "axum_inbox"
+required-features = ["diesel"]
+
+[[example]]
+name = "axum_openapi"
+required-features = ["diesel", "utoipa"]
+
+[[example]]
+name = "axum_commanding"
+required-features = ["commanding"]
+
+[[example]]
+name = "axum_commanding_openapi"
+required-features = ["commanding", "utoipa"]
+
+[[example]]
+name = "axum_eventing"
+required-features = ["eventing"]
+
+[[example]]
+name = "axum_eventing_openapi"
+required-features = ["eventing", "utoipa"]
+
+[[example]]
+name = "axum_outbox"
+required-features = ["outbox"]
+
+[[example]]
+name = "axum_outbox_openapi"
+required-features = ["outbox", "utoipa"]

@@ -1,0 +1,20 @@
+[package]
+name = "commanding_api"
+version.workspace = true
+edition.workspace = true
+
+[features]
+tokio = ["dep:tokio"]
+testing = ["dep:eventing", "dep:uuid"]
+
+[dependencies]
+commanding = { path = "../commanding", version = "0.3.0", registry = "margo", default-features = false, package = "mulac-commanding" }
+eventing = { path = "../eventing", version = "0.3.0", registry = "margo", default-features = false, package = "mulac-eventing", optional = true }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt"], optional = true }
+uuid = { workspace = true, optional = true }
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }

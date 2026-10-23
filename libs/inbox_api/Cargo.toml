@@ -1,0 +1,22 @@
+[package]
+name = "inbox_api"
+version.workspace = true
+edition.workspace = true
+
+[features]
+default = ["diesel"]
+diesel = ["inbox/diesel", "commanding/diesel"]
+tokio = ["dep:tokio"]
+testing = []
+
+[dependencies]
+commanding = { path = "../commanding", version = "0.3.0", registry = "margo", default-features = false, package = "mulac-commanding" }
+inbox = { path = "../inbox", version = "0.3.0", registry = "margo", default-features = false, package = "mulac-inbox" }
+serde.workspace = true
+serde_json.workspace = true
+thiserror.workspace = true
+tokio = { workspace = true, features = ["rt"], optional = true }
+uuid.workspace = true
+
+[dev-dependencies]
+tokio = { workspace = true, features = ["macros", "rt"] }
