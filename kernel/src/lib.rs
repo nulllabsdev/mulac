@@ -12,15 +12,11 @@ pub mod prelude {
     };
     pub use commanding::prelude::{
         CommandConsumer,
-        CommandConsumerRepository,
-        CommandConsumerStorage,
         CommandDispatcher,
         CommandError,
         CommandGateway,
         CommandHandlerPort,
-        CommandRecorder,
-        CommandRecorderRepository,
-        CommandStoreStorage,
+        DieselPgCommandRepository,
         NewCommand,
         NewCommandEnvelope,
         NewCommandMetadata,
@@ -30,24 +26,20 @@ pub mod prelude {
     pub use mulac_diesel::{DbPool, build_pool};
 
     pub use eventing::prelude::{
+        DieselPgEventRepository,
         EventConsumer,
-        EventConsumerRepository,
-        EventConsumerStorage,
         EventDispatcher,
         EventGateway,
-        EventRecorder,
-        EventRecorderRepository,
-        EventStoreStorage,
         ReservableEventSpec, //
     };
     pub use inbox::prelude::{
+        DieselPgInboxRepository,
+
         InboundMessageEnvelope,
         InboxConsumer,
-        InboxConsumerRepository,
-        InboxConsumerStorage,
         InboxError,
         InboxStorePort,
-        InboxStoreStorage,
+
         NewInboxMessageEnvelope,
         ReservableInboxSpec, //
     };
@@ -63,7 +55,6 @@ pub use commanding::prelude::{
 };
 use commanding::prelude::{
     CommandConsumer,
-    CommandConsumerRepository,
     CommandDispatcher,
     CommandGateway,
     ErasedCommandHandler,
@@ -73,7 +64,6 @@ use commanding::prelude::{
 };
 pub use eventing::prelude::{
     EventConsumer,
-    EventConsumerRepository,
     EventDispatcher,
     EventEnvelope,
     EventError,
@@ -90,8 +80,6 @@ pub use inbox::prelude::{
     InboundMessageEnvelope,
     InboxError,
     InboxMessageMetadata,
-    InboxRecorder,
-    InboxRecorderRepository,
     InboxStorePort,
     NewInboxMessageEnvelope, //
 };
@@ -165,7 +153,7 @@ impl KernelConfig {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub inbox_recorder: Arc<InboxRecorder>,
+    pub inbox_store: Arc<dyn InboxStorePort>,
     pub command_gateway: Arc<CommandGateway>,
     pub event_gateway: Arc<EventGateway>,
 }
@@ -177,7 +165,7 @@ impl AppState {
     {
         let envelope = envelope
             .into_gateway_envelope()
-            .map_err(|e| KernelError::Command(CommandError::Conversion(e.to_string())))?;
+            .map_err(|e| KernelError::Command(CommandError::conversion(e)))?;
         self.command_gateway.dispatch(envelope)?;
         Ok(())
     }
@@ -348,12 +336,8 @@ impl KernelBuilder {
         ));
         let command_gateway = Arc::new(CommandGateway::direct(command_dispatcher.clone()));
 
-        let inbox_recorder = Arc::new(InboxRecorder::new(Arc::new(InboxRecorderRepository::new(
-            inbox_store,
-        ))));
-
         let state = AppState {
-            inbox_recorder,
+            inbox_store,
             command_gateway,
             event_gateway,
         };
@@ -384,11 +368,8 @@ impl KernelBuilder {
         let command_registry =
             Arc::new(CommandHandlerRegistry::from_handlers(self.command_handlers));
 
-        let command_store = Arc::new(prelude::CommandStoreStorage::new(db_pool.clone()));
-        let command_recorder = Arc::new(prelude::CommandRecorder::new(Arc::new(
-            prelude::CommandRecorderRepository::new(command_store),
-        )));
-        let command_gateway = Arc::new(CommandGateway::two_phased(command_recorder));
+        let command_repository = Arc::new(prelude::DieselPgCommandRepository::new(db_pool.clone()));
+        let command_gateway = Arc::new(CommandGateway::two_phased(command_repository.clone()));
 
         let subscribers = self
             .event_subscribers
@@ -414,29 +395,15 @@ impl KernelBuilder {
         let event_registry = Arc::new(EventSubscriberRegistry::from_subscribers(subscribers));
         let event_dispatcher = Arc::new(EventDispatcher::new(event_registry));
 
-        let event_store = Arc::new(prelude::EventStoreStorage::new(db_pool.clone()));
-        let event_recorder = Arc::new(prelude::EventRecorder::new(Arc::new(
-            prelude::EventRecorderRepository::new(event_store),
-        )));
-        let event_gateway = Arc::new(EventGateway::two_phased(event_recorder));
+        let event_repository = Arc::new(prelude::DieselPgEventRepository::new(db_pool.clone()));
+        let event_gateway = Arc::new(EventGateway::two_phased(event_repository.clone()));
 
         let command_dispatcher = Arc::new(CommandDispatcher::new(command_registry, event_gateway));
 
-        let command_storage = Arc::new(prelude::CommandConsumerStorage::new(db_pool.clone()));
-        let command_consumer_repository =
-            CommandConsumerRepository::new(command_storage.clone(), command_storage);
-        let command_consumer = Arc::new(CommandConsumer::new(
-            command_consumer_repository,
-            command_dispatcher,
-        ));
+        let command_consumer =
+            Arc::new(CommandConsumer::new(command_repository, command_dispatcher));
 
-        let event_storage = Arc::new(prelude::EventConsumerStorage::new(db_pool));
-        let event_consumer_repository =
-            EventConsumerRepository::new(event_storage.clone(), event_storage);
-        let event_consumer = Arc::new(EventConsumer::new(
-            event_consumer_repository,
-            event_dispatcher,
-        ));
+        let event_consumer = Arc::new(EventConsumer::new(event_repository, event_dispatcher));
 
         Ok(PersistentKernelHandle {
             state: PersistentKernelState {
@@ -501,8 +468,8 @@ pub struct KernelHandle {
 #[derive(Clone)]
 pub struct PersistentKernelState {
     command_gateway: Arc<CommandGateway>,
-    command_consumer: Arc<CommandConsumer>,
-    event_consumer: Arc<EventConsumer>,
+    command_consumer: Arc<CommandConsumer<prelude::DieselPgCommandRepository>>,
+    event_consumer: Arc<EventConsumer<prelude::DieselPgEventRepository>>,
     drain_rounds: usize,
 }
 
@@ -513,7 +480,7 @@ impl PersistentKernelState {
     {
         let envelope = envelope
             .into_gateway_envelope()
-            .map_err(|e| KernelError::Command(CommandError::Conversion(e.to_string())))?;
+            .map_err(|e| KernelError::Command(CommandError::conversion(e)))?;
 
         self.command_gateway.dispatch(envelope)?;
 
@@ -548,11 +515,11 @@ impl PersistentKernelHandle {
         self.token.child_token()
     }
 
-    pub fn command_consumer(&self) -> Arc<CommandConsumer> {
+    pub fn command_consumer(&self) -> Arc<CommandConsumer<prelude::DieselPgCommandRepository>> {
         self.state.command_consumer.clone()
     }
 
-    pub fn event_consumer(&self) -> Arc<EventConsumer> {
+    pub fn event_consumer(&self) -> Arc<EventConsumer<prelude::DieselPgEventRepository>> {
         self.state.event_consumer.clone()
     }
 
@@ -575,11 +542,17 @@ impl KernelHandle {
         self.token.child_token()
     }
 
-    pub fn command_consumer(&self, repo: CommandConsumerRepository) -> CommandConsumer {
+    pub fn command_consumer(
+        &self,
+        repo: Arc<prelude::DieselPgCommandRepository>,
+    ) -> CommandConsumer<prelude::DieselPgCommandRepository> {
         CommandConsumer::new(repo, self.command_dispatcher.clone())
     }
 
-    pub fn event_consumer(&self, repo: EventConsumerRepository) -> EventConsumer {
+    pub fn event_consumer(
+        &self,
+        repo: Arc<prelude::DieselPgEventRepository>,
+    ) -> EventConsumer<prelude::DieselPgEventRepository> {
         EventConsumer::new(repo, self.event_dispatcher.clone())
     }
 

@@ -111,8 +111,8 @@ async fn direct_inbox_records_the_original_message_in_the_supplied_store() {
 
     kernel
         .state()
-        .inbox_recorder
-        .publish(message.clone().into())
+        .inbox_store
+        .store(message.clone().into())
         .unwrap();
 
     let messages = store.messages.lock().unwrap();
@@ -133,7 +133,7 @@ async fn direct_inbox_propagates_storage_failure_instead_of_accepting_the_messag
         .unwrap();
 
     assert!(matches!(
-        kernel.state().inbox_recorder.publish(inbound().into()),
+        kernel.state().inbox_store.store(inbound().into()),
         Err(InboxError::Storage(message)) if message == "inbox unavailable"
     ));
 }

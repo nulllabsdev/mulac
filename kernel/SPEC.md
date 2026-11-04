@@ -54,12 +54,12 @@ Direct startup using the existing Diesel inbox adapter (inside an async
 application startup function):
 
 ```rust
-use mulac_kernel::prelude::{InboxStoreStorage, KernelConfig, boot, build_pool};
+use mulac_kernel::prelude::{DieselPgInboxRepository, KernelConfig, boot, build_pool};
 use std::sync::Arc;
 
 let pool = build_pool(database_url)?;
 let kernel = boot(KernelConfig::default())
-    .inbox_store(Arc::new(InboxStoreStorage::new(pool)))
+    .inbox_store(Arc::new(DieselPgInboxRepository::new(pool)))
     .start()
     .await?;
 ```
@@ -73,3 +73,12 @@ injects the adapter; it does not perform migrations or validate its schema.
 rejection, inbox recording and error propagation, direct dispatch, and
 persistent factory wiring. Startup-only persistent tests use an empty lazy
 pool, so they do not require PostgreSQL or validate database operations.
+
+## Persistent repository sharing
+
+Persistent assembly shares one `DieselPgEventRepository` between the event
+recorder and generic consumer. `run_event_worker` is generic over the reserve/
+process ports. Direct assembly still requires an explicitly supplied inbox store;
+no automatic sweep worker is installed. See ADR-012. Automatic failures now remain
+`Failed` at exhaustion; item-local panic recovery does not replace crash recovery.
+See [item failure isolation](../docs/item-failure-isolation.md).
