@@ -45,6 +45,6 @@ When an external transport supplies a message ID (e.g. via AMQP `message_id` pro
 
 ## References
 
-- `inbox/src/record_messages.rs` — UUID v7 generation when message_id is absent
-- `inbox/src/assembly/infra_diesel.rs` — UUID v7 for reservation IDs
+- `libs/inbox/src/application/conversions.rs` — UUID v7 generation when message_id is absent
+- `libs/inbox/src/infra_diesel/repository.rs` — UUID v7 for reservation IDs
 - `uuid` crate docs: `Uuid::now_v7()`

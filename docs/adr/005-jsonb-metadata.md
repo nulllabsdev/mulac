@@ -55,5 +55,6 @@ A missing `meta` column value maps to `None` in the envelope; a present value is
 
 ## References
 
-- `inbox/src/assembly/infra_diesel.rs` — `MetadataJsonb`, `InboxEntry`, `NewInboxEntry`
-- `inbox/src/assembly/application.rs` — `InboxMessageMetadata`
+- `libs/inbox/src/infra_diesel/models.rs` — `MetadataJsonb`
+- `libs/inbox/src/infra_diesel/entity.rs` — `InboxEntry`, `NewInboxEntry`
+- `libs/inbox/src/application/models.rs` — `InboxMessageMetadata`

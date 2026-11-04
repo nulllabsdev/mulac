@@ -14,7 +14,7 @@ A naive 0-indexed sequential assignment (0, 1, 2, 3, 4, …) means that insertin
 All status codes use a sparse integer scheme with reserved gaps:
 
 | Code           | State       |
-|----------------|-------------|
+| -------------- | ----------- |
 | 0              | `received`  |
 | _(1 reserved)_ |             |
 | 2              | `reserved`  |
@@ -42,6 +42,6 @@ The mapping is implemented via an explicit `From<i32>` / `Into<i32>` on the stat
 
 ## References
 
-- `inbox/src/assembly/domain.rs` — `InboxStatus` reference implementation
-- `write_side/src/commanding/model.rs` — `CommandStatus` following the same scheme
-- `outbox/src/model.rs` — `OutboxStatus` following the same scheme
+- `libs/inbox/src/domain/mod.rs` — `InboxStatus` reference implementation
+- `libs/commanding/src/domain/mod.rs` — `CommandStatus` following the same scheme
+- `libs/outbox/src/domain/mod.rs` — `OutboxStatus` following the same scheme

@@ -16,10 +16,10 @@ Unconditionally compiling all infrastructure into every crate would:
 
 Infrastructure adapters are gated behind Cargo feature flags. Feature names follow the convention `infra_<adapter>` or simply the adapter name for well-known ones:
 
-| Feature  | What it enables                                                                                |
-|----------|------------------------------------------------------------------------------------------------|
-| `diesel` | `InboxStoreStorage`, `InboxConsumerStorage`, `DbPool`, r2d2 connection pool, Diesel PostgreSQL |
-| `amqp`   | `AmqpWorker`, `AmqpTransport`, `WorkerLoop`, lapin, tokio-amqp                                 |
+| Feature  | What it enables                                                                         |
+| -------- | --------------------------------------------------------------------------------------- |
+| `diesel` | queue-specific `DieselPg…Repository`, `DbPool`, r2d2 connection pool, Diesel PostgreSQL |
+| `amqp`   | `AmqpWorker`, `AmqpTransport`, `WorkerLoop`, lapin, tokio-amqp                          |
 
 Feature flags apply to both the `Cargo.toml` dependency declarations and the conditional compilation blocks in `lib.rs`:
 
@@ -32,10 +32,10 @@ amqp   = ["dep:lapin", "dep:tokio-amqp", ...]
 ```rust
 // lib.rs
 #[cfg(feature = "diesel")]
-pub mod infra_diesel { ... }
+mod infra_diesel { ... }
 
 #[cfg(feature = "amqp")]
-pub mod amqp_consumption { ... }
+mod amqp_consumption { ... }
 ```
 
 The application and domain layers are always compiled and carry no feature flags.

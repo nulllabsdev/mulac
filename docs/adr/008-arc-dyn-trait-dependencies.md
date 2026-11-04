@@ -1,6 +1,6 @@
 # ADR-008: Arc<dyn Trait> for Shared Port Dependencies
 
-**Status:** Accepted  
+**Status:** Amended by ADR-012 for queue consumers and synchronous HTTP bridges.
 **Date:** 2026-05-12
 
 ## Context
@@ -62,7 +62,9 @@ Generics are used only when the intent is to make the containing type explicitly
 
 ## References
 
-- `inbox/src/record_messages.rs` — `InboxRecorderRepository` with `Arc<dyn InboxStorePort>`
-- `inbox/src/inbox_consumer.rs` — `InboxConsumerRepository`
-- `test_app/src/lib.rs` — multiple workers sharing one repository via `Arc::clone`
+- [ADR-012](012-unified-queue-repositories.md) — the amendment for queue consumers and synchronous HTTP bridges
+- `libs/inbox/src/http/execution.rs` — `AsyncInboxService::new` takes `Arc<dyn InboxStorePort>`
+- `libs/inbox/src/application/stale_reservation_sweep.rs` — `ReservationSweeper` with `Arc<dyn InboxSweepPort>`
+- `libs/inbox/src/execution/inbox_consumer.rs` — `InboxConsumer<R>`, generic over its repository per ADR-012
+- `kernel/src/lib.rs` — one repository shared through `Arc` clones during persistent startup
 - [developer-guidelines.md](../developer-guidelines.md) — "Use Arc<dyn Trait> for cloneable shared dependencies"

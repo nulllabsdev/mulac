@@ -1,6 +1,6 @@
 # ADR-007: Use-Case-Split Repositories and Storage Adapters
 
-**Status:** Accepted  
+**Status:** Superseded by ADR-012; migration is staged.
 **Date:** 2026-05-12
 
 ## Context
@@ -56,7 +56,6 @@ pub fn repository(database_url: String) -> Result<InboxRecorderRepository, Strin
 
 ## References
 
-- `inbox/src/record_messages.rs` — `InboxRecorderRepository`
-- `inbox/src/inbox_consumer.rs` — `InboxConsumerRepository`
-- `inbox/src/assembly/infra_diesel.rs` — `InboxStoreStorage`, `InboxConsumerStorage`
+- [ADR-012](012-unified-queue-repositories.md) — the decision that superseded this one
+- `libs/inbox/src/infra_diesel/repository.rs` — `DieselPgInboxRepository`, which replaced `InboxRecorderRepository`, `InboxConsumerRepository`, `InboxStoreStorage`, and `InboxConsumerStorage`
 - [developer-guidelines.md](../developer-guidelines.md) — "Separate repositories by use case"

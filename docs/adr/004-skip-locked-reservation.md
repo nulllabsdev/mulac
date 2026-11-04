@@ -54,6 +54,6 @@ The transaction commits atomically: either all selected rows are claimed or none
 
 ## References
 
-- `inbox/src/assembly/infra_diesel.rs` — reference implementation of `InboxReservePort`
+- `libs/inbox/src/infra_diesel/repository.rs` — reference implementation of `InboxReservePort`
 - PostgreSQL docs: `SELECT … FOR UPDATE SKIP LOCKED`
 - [contracts.md](../contracts.md) — reservation guarantees for each component

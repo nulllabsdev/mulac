@@ -18,13 +18,13 @@ domain  ←  application  ←  features  ←  infra adapters
 Dependency arrows point inward only.
 
 | Layer              | Contents                                              | Allowed dependencies           |
-|--------------------|-------------------------------------------------------|--------------------------------|
+| ------------------ | ----------------------------------------------------- | ------------------------------ |
 | **domain**         | Core models, status enums, value objects              | No external crates, no I/O     |
 | **application**    | Port traits, application-layer envelopes, error types | Domain layer only              |
 | **features**       | Use-case orchestrators, repositories                  | Application layer (ports) only |
 | **infra adapters** | Concrete storage and transport implementations        | Application + feature layers   |
 
-Layers live as submodules under an `assembly/` directory (domain, application, infra adapters) and as top-level modules for feature use cases.
+Layers live as top-level modules under each crate's `src/`: `domain`, `application`, `execution` (use-case orchestrators), and adapters such as `infra_diesel` and `http`.
 
 Public API is exposed exclusively through a root `lib.rs` re-export module (`prelude`). External callers never import from internal layers directly.
 
