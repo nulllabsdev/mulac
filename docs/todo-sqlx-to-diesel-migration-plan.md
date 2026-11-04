@@ -81,19 +81,19 @@ Reference files to copy patterns from:
 
 ## The diesel query map (DSL form)
 
-| sqlx today | diesel DSL replacement |
-|---|---|
-| `fetch_todo` SELECT by id | `todos::table.find(id).first::<TodoRow>(&mut conn).optional()? → NotFound` |
-| `list` (all / by status) | `todos::table.order(todos::created_at.asc()).load::<TodoRow>` (+ `.filter(todos::status.eq(s))`) |
-| `create_from_command` INSERT…RETURNING | `diesel::insert_into(todos::table).values((..)).get_result::<TodoRow>` (optionally inside `conn.transaction`) |
-| `complete`/`reopen` UPDATE…RETURNING | `diesel::update(todos::table.find(id)).set((status.eq(..), updated_at.eq(now))).get_result::<TodoRow>().optional()?` |
-| `update_from_command` | `diesel::update(...).set((title.eq, description.eq, updated_at.eq)).get_result().optional()?` |
-| `set_due_date` | `diesel::update(...).set((due_at.eq, updated_at.eq)).get_result().optional()?` |
-| `delete_from_command` DELETE…RETURNING | `diesel::delete(todos::table.find(id)).get_result::<TodoRow>().optional()?` |
-| `record_event_payload` INSERT outbox | `diesel::insert_into(outbox_messages::table).values((id.eq, event_type.eq, payload.eq(value), status.eq("pending"), created_at.eq(now)))` |
-| `record_received` INSERT…ON CONFLICT | `diesel::insert_into(inbox_messages::table).values((..)).on_conflict_do_nothing().execute()` → `rows == 0` ⇒ `Conflict` |
-| `mark_processed` / `mark_failed` | `diesel::update(inbox_messages::table.find(id)).set((..)).execute()` |
-| outbox `list` | `outbox_messages::table.order(created_at.asc()).load::<OutboxRow>` |
+| sqlx today                             | diesel DSL replacement                                                                                                                    |
+| -------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `fetch_todo` SELECT by id              | `todos::table.find(id).first::<TodoRow>(&mut conn).optional()? → NotFound`                                                                |
+| `list` (all / by status)               | `todos::table.order(todos::created_at.asc()).load::<TodoRow>` (+ `.filter(todos::status.eq(s))`)                                          |
+| `create_from_command` INSERT…RETURNING | `diesel::insert_into(todos::table).values((..)).get_result::<TodoRow>` (optionally inside `conn.transaction`)                             |
+| `complete`/`reopen` UPDATE…RETURNING   | `diesel::update(todos::table.find(id)).set((status.eq(..), updated_at.eq(now))).get_result::<TodoRow>().optional()?`                      |
+| `update_from_command`                  | `diesel::update(...).set((title.eq, description.eq, updated_at.eq)).get_result().optional()?`                                             |
+| `set_due_date`                         | `diesel::update(...).set((due_at.eq, updated_at.eq)).get_result().optional()?`                                                            |
+| `delete_from_command` DELETE…RETURNING | `diesel::delete(todos::table.find(id)).get_result::<TodoRow>().optional()?`                                                               |
+| `record_event_payload` INSERT outbox   | `diesel::insert_into(outbox_messages::table).values((id.eq, event_type.eq, payload.eq(value), status.eq("pending"), created_at.eq(now)))` |
+| `record_received` INSERT…ON CONFLICT   | `diesel::insert_into(inbox_messages::table).values((..)).on_conflict_do_nothing().execute()` → `rows == 0` ⇒ `Conflict`                   |
+| `mark_processed` / `mark_failed`       | `diesel::update(inbox_messages::table.find(id)).set((..)).execute()`                                                                      |
+| outbox `list`                          | `outbox_messages::table.order(created_at.asc()).load::<OutboxRow>`                                                                        |
 
 Error mapping: `diesel::result::Error → AppError::Storage(anyhow::anyhow!(e))`; "not found"
 via `.optional()?` returning `None → AppError::NotFound` (read paths) / the existing

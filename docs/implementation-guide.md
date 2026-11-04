@@ -8,25 +8,11 @@ For the architectural rationale behind each pattern, see the [ADR index](adr/).
 
 ## File structure
 
-Every component crate follows this layout:
-
-```
-<crate>/
-├── Cargo.toml
-├── SPEC.md               ← technical specification (filled before implementation)
-└── src/
-    ├── lib.rs            ← public prelude facade only, no logic
-    ├── assembly/
-    │   ├── mod.rs
-    │   ├── domain.rs     ← core models, status enums, value objects
-    │   ├── application.rs← port traits, application envelopes, error type
-    │   └── infra_<name>.rs ← concrete storage or transport adapter
-    ├── <use_case_1>.rs   ← one file per use case
-    ├── <use_case_2>.rs
-    └── <use_case_n>.rs
-```
-
-Infrastructure adapters that are optional go behind feature flags and into `infra_<name>.rs` modules inside `assembly/`.
+Queue crates have private `domain`, `application`, `infra_diesel`, and HTTP
+boundaries. Commanding groups its HTTP adapters under `http`; other private file
+decompositions are allowed. `pub mod prelude` is the only public module interface.
+Application owns both message models and use cases; Diesel entity types remain
+in infrastructure. Optional adapters are feature-gated.
 
 ---
 
@@ -61,7 +47,7 @@ pub enum CommandStatus {
 Port naming convention:
 
 | Responsibility                  | Trait name                 |
-|---------------------------------|----------------------------|
+| ------------------------------- | -------------------------- |
 | Write a new entry               | `<Component>StorePort`     |
 | Reserve entries                 | `<Component>ReservePort`   |
 | Mark completed/failed           | `<Component>ProcessPort`   |
@@ -69,43 +55,23 @@ Port naming convention:
 | Receive from external transport | `<Component>TransportPort` |
 | Acknowledge transport delivery  | `AcknowledgeHandle`        |
 
-### use case modules
+### Use-case modules
 
-One file per use case. Each file contains:
-
-1. **Spec struct** — configuration for that use case (limits, timeouts, attempt counts).
-2. **Repository struct** — holds `Arc<dyn SomePort>` fields; named `<Component><UseCase>Repository`.
-3. **Component struct** — the public-facing handle; named `<Component><Noun>` (e.g. `InboxRecorder`, `InboxConsumer`). Wraps the repository.
-4. **Constructor function** — `pub fn repository(database_url: String) -> Result<…, String>` that builds the storage adapter and wires up the repository.
-
-```rust
-// record_messages.rs pattern
-pub struct RecordableSpec { /* config */ }
-
-pub struct CommandRecorderRepository {
-    store: Arc<dyn CommandStorePort>,
-}
-
-pub struct CommandRecorder {
-    repository: CommandRecorderRepository,
-}
-
-pub fn repository(database_url: String) -> Result<CommandRecorderRepository, String> {
-    let pool = build_pool(&database_url).map_err(|e| e.to_string())?;
-    let store = Arc::new(CommandStoreStorage::new(pool));
-    Ok(CommandRecorderRepository::new(store))
-}
-```
+Recorders delegate directly to `Arc<dyn StorePort>`. Consumers hold one `Arc<R>`
+implementing reserve/process ports, plus their independent dispatcher, gateway,
+or publisher. Sweepers hold `Arc<dyn SweepPort>`. No synchronous code requires
+`R: 'static`; HTTP async bridges erase repository types at the blocking boundary.
+Use one queue-specific Diesel repository, constructed from an existing pool.
+See [ADR-012](adr/012-unified-queue-repositories.md).
 
 ### infra_<name>.rs
 
 - Contains concrete implementations of the port traits defined in `application.rs`.
 - Named by adapter, not by use case: `infra_diesel.rs`, not `recording_diesel.rs`.
-- One storage struct per responsibility cluster:
+- One concrete repository per queue implements its four storage ports:
 
   ```
-  CommandStoreStorage    → implements CommandStorePort
-  CommandConsumerStorage → implements CommandReservePort + CommandProcessPort + CommandSweepPort
+  DieselPgCommandRepository → implements CommandStorePort + CommandReservePort + CommandProcessPort + CommandSweepPort
   ```
 
 - Reservation uses `SELECT … FOR UPDATE SKIP LOCKED` in a single transaction. See [ADR-004](adr/004-skip-locked-reservation.md).
@@ -117,18 +83,15 @@ pub fn repository(database_url: String) -> Result<CommandRecorderRepository, Str
 Re-export everything that external callers need through a single `prelude` module. Nothing else.
 
 ```rust
+mod application;
+mod domain;
+#[cfg(feature = "diesel")]
+mod infra_diesel;
 pub mod prelude {
-    pub use crate::record_messages::{CommandRecorder, CommandRecorderRepository};
-    pub use crate::command_consumer::{CommandConsumer, CommandConsumerRepository, ReservableCommandSpec};
-    pub use crate::stale_reservation_sweep::{ReservationSweeper, StaleReservationSpec};
-    pub use crate::assembly::application::{
-        CommandEnvelope,
-        CommandError,
-        CommandProcessPort, //
-    };
-
+    pub use crate::application::prelude::*;
+    pub use crate::domain::prelude::{CommandStatus, ExtraInfo};
     #[cfg(feature = "diesel")]
-    pub use crate::assembly::infra_diesel::{CommandStoreStorage, CommandConsumerStorage, DbPool};
+    pub use crate::infra_diesel::prelude::DieselPgCommandRepository;
 }
 ```
 
@@ -169,7 +132,7 @@ Apply this policy uniformly in `failed()` transitions across all components:
 - Delay = `attempts × 30 seconds`, where `attempts` is the value after incrementing on reservation.
 - Maximum single-attempt delay: 2 minutes.
 - At `max_attempts` (default 6): transition to `Dead` instead of `Failed`.
-- Stale sweep resets to `Received`/`Failed` without incrementing `attempts`.
+- Stale sweeps transition to `Failed` or `Dead` according to the timeout policy without incrementing `attempts`.
 
 ```rust
 let delay_secs = (entry.attempts as i64 * 30).min(120);
@@ -204,10 +167,10 @@ diesel = { version = "...", features = ["postgres", "chrono", "uuid", "serde_jso
 ## Checklist for implementing a new crate
 
 - [ ] Fill in `SPEC.md` before writing code
-- [ ] Write `assembly/domain.rs`: status enum with sparse codes, entry model
-- [ ] Write `assembly/application.rs`: port traits, envelope types, error enum
-- [ ] Write use-case modules with Spec, Repository, Component, and constructor
-- [ ] Write `assembly/infra_<name>.rs` behind feature flag
+- [ ] Write `domain/mod.rs`: status enum with sparse codes, entry model
+- [ ] Write `application/models.rs`: port traits, envelope types, error enum
+- [ ] Write application use cases with specs and direct port dependencies; use generic consumers and one concrete adapter per queue
+- [ ] Write `infra_<name>/mod.rs` behind feature flag
 - [ ] Wire up `lib.rs` with `prelude` re-exports
 - [ ] Add reservation tests: concurrent workers must not claim the same entry
 - [ ] Add retry tests: failed entries schedule at correct future time
@@ -219,9 +182,9 @@ diesel = { version = "...", features = ["postgres", "chrono", "uuid", "serde_jso
 ## What not to do
 
 - Do not put SQL in use-case modules. SQL belongs in `infra_*` modules only.
-- Do not import from `crate::prelude` inside the crate. Use direct module paths internally; `prelude` is for external callers.
-- Do not share a single repository across multiple use cases. Each use case gets its own.
-- Do not create a generic `<Component>Repository<S>` as the public API. Use `Arc<dyn Trait>` and keep the repository concrete. See [ADR-008](adr/008-arc-dyn-trait-dependencies.md).
+- Import through feature preludes, not private implementation submodules.
+- Share a queue repository across its use cases; do not share one generic implementation across different queues.
+- Keep concrete storage adapters non-generic; consumers and synchronous HTTP bridges are generic over their reserve/process repository. See ADR-012.
 - Do not add status codes sequentially. Leave gaps. See [ADR-002](adr/002-status-code-gaps.md).
 - Do not use UUID v4 for generated IDs. Use `Uuid::now_v7()`. See [ADR-003](adr/003-uuid-v7-identifiers.md).
 - Do not acknowledge transport delivery before durable storage is confirmed.

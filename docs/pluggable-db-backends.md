@@ -43,25 +43,25 @@ This is the same pattern `todo`'s `OutboxSubscriber` already uses successfully, 
 
 ### 1. Per-crate `infra_sqlx_pg` adapters (commanding → eventing → inbox → outbox)
 
-Mirror the Diesel layout exactly. Diesel splits its impls between a central `assembly/infra_diesel.rs` and in-consumer `#[cfg(feature="diesel")] mod infra_diesel_pg` blocks; add parallel `#[cfg(feature="sqlx-pg")] mod infra_sqlx_pg` blocks in the same places.
+Mirror the Diesel layout exactly. Each crate keeps its Diesel adapter in `src/infra_diesel/` (`repository.rs`, `reservation.rs`, `entity.rs`, `models.rs`, `conversions.rs`, `schema.rs`), declared in `lib.rs` as `#[cfg(feature = "diesel")] mod infra_diesel`; add a parallel `#[cfg(feature = "sqlx-pg")] mod infra_sqlx_pg` with the same file split.
 
 - **Entity rows:** define parallel rows with `#[derive(sqlx::FromRow)]` (e.g. `CommandEntrySqlx`) — do not reuse the Diesel `Queryable` entity. jsonb columns typed as `Option<sqlx::types::Json<CommandMetadata>>` (`meta`) and `Option<sqlx::types::Json<ExtraInfoJsonb>>` (`extra_info`). Bind inserts with `.bind(sqlx::types::Json(value))` so the Postgres jsonb v1 wire byte is emitted.
 - **Reuse domain types** verbatim (`CommandEnvelope`, `CommandMetadata`, `ExtraInfo`, `CommandStatus`, `i32::from(status)` mapping). Add `TryFrom<CommandEntrySqlx> for CommandEnvelope`.
-- **Storage structs + port impls** placed to mirror Diesel:
-  - commanding: `CommandStorePort` in `record_commands.rs`; `CommandReservePort`+`CommandProcessPort` in `command_consumer.rs`; `CommandSweepPort` in `stale_command_sweep.rs`.
-  - eventing: all ports in a new `assembly/infra_sqlx_pg.rs`.
-  - inbox: `InboxStorePort` in `record_messages.rs`; `InboxReservePort`+`InboxProcessPort` in `inbox_consumer.rs`; `InboxSweepPort` in `stale_reservation_sweep.rs`. (`InboxTransportPort`/`AcknowledgeHandle` are async AMQP — **out of scope**.)
-  - outbox: all ports in a new `assembly/infra_sqlx_pg.rs`, including `dead` and the transactional `failed`/`sweep`. (`OutboxPublisherPort` is AMQP — out of scope.)
+- **Storage structs + port impls** placed to mirror Diesel, in each crate's new `src/infra_sqlx_pg/repository.rs`:
+  - commanding: `CommandStorePort`, `CommandReservePort`, `CommandProcessPort`, and `CommandSweepPort`.
+  - eventing: all ports.
+  - inbox: `InboxStorePort`, `InboxReservePort`, `InboxProcessPort`, and `InboxSweepPort`. (`InboxTransportPort`/`AcknowledgeHandle` are async AMQP — **out of scope**.)
+  - outbox: all ports, including `dead` and the transactional `failed`/`sweep`. (`OutboxPublisherPort` is AMQP — out of scope.)
 
 **SQL translation:** `reserve`/`sweep` are already raw `diesel::sql_query` strings — copy verbatim into `sqlx::query_as::<_, RowSqlx>` / `sqlx::query`; same `$1..$n` placeholders; `.bind::<DieselType,_>(v)` → `.bind(v)`; bind `Vec<i32>` for `status = ANY($1)`; generate `reservation_id = Uuid::now_v7()` in Rust (same as Diesel). `completed`/`failed`/`dead` use the Diesel DSL today — re-express as raw SQL `UPDATE ... RETURNING`, run `failed`/`dead` inside `let mut tx = pool.begin().await?; ...; tx.commit().await?` (read attempts+extra_info, append error via existing `append_error`, status Dead if `attempts>=max_attempts` else Failed, backoff `min(max(attempts,1)*30,120)`s). Map `sqlx::Error::RowNotFound` → `MissingReservation`. Wrap every awaited query in the local `block_on(...)`. Use **runtime** `sqlx::query`/`query_as` only — never the compile-time `query!` macros (avoids a build-time `DATABASE_URL`).
 
-Reference templates: `libs/commanding/src/assembly/infra_diesel.rs`, `libs/commanding/src/command_consumer.rs`, and `libs/outbox/src/assembly/infra_diesel.rs` (hardest: `dead` + transactional `failed`/`sweep`).
+Reference templates: `libs/commanding/src/infra_diesel/repository.rs`, `libs/commanding/src/infra_diesel/reservation.rs`, and `libs/outbox/src/infra_diesel/repository.rs` (hardest: `dead` + transactional `failed`/`sweep`).
 
 ### 2. Feature wiring
 
 - `libs/Cargo.toml` `[workspace.dependencies]`: add `sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio-rustls","postgres","uuid","chrono","json","derive"] }` (match `todo`'s sqlx so unification doesn't fork builds); ensure `tokio` has `rt-multi-thread`.
 - Each lib's `[features]`: keep `default = ["diesel"]`; add `sqlx-pg = ["dep:sqlx", "dep:tokio"]`; add `sqlx`/`tokio` as optional deps (inbox/outbox already have optional `tokio` for amqp — extend the union with `rt-multi-thread`).
-- **Generalize shared `#[cfg(feature = "diesel")]` gates** that the sqlx path also needs, to `#[cfg(any(feature = "diesel", feature = "sqlx-pg"))]`: the `Criterion` enum in each `domain.rs`; `ReservableCommandSpec::criteria()` + its imports/tests in `command_consumer.rs`; `StaleCommandSpec::criteria()` in `stale_command_sweep.rs`; the equivalent spec/criteria in eventing/inbox/outbox; the `pub(crate) use ...Criterion` re-exports in each `assembly/mod.rs`. The Diesel `schema::table!` module stays `diesel`-only (the sqlx adapter uses raw SQL table names). Audit every `#[cfg(feature="diesel")]`: storage/entity/schema → stays `diesel`; shared spec/criteria/domain → `any(...)`.
+- **Generalize shared `#[cfg(feature = "diesel")]` gates** that the sqlx path also needs, to `#[cfg(any(feature = "diesel", feature = "sqlx-pg"))]`: the `Criterion` enum in `application/criteria.rs` (commanding, eventing, inbox); `ReservableCommandSpec::criteria()` + its imports/tests in `execution/reservable.rs`; `StaleCommandSpec::criteria()` in `application/stale_command_sweep.rs`; the equivalent spec/criteria in eventing/inbox/outbox. The Diesel `schema::table!` module stays `diesel`-only (the sqlx adapter uses raw SQL table names). Audit every `#[cfg(feature="diesel")]`: storage/entity/schema → stays `diesel`; shared spec/criteria/domain → `any(...)`.
 - Each lib's `lib.rs` `prelude` block: add `#[cfg(feature="sqlx-pg")] pub use ...::{...SqlxStorage}`; leave existing diesel-only entity/storage re-exports gated on `diesel`.
 
 ### 3. Kernel decoupling (`kernel/src/lib.rs`, `kernel/Cargo.toml`)

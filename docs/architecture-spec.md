@@ -48,5 +48,5 @@ For component responsibilities, models, lifecycle states, and rules, see [compon
 ## Document Metadata
 
 | Version | Author               | Reviewers            | Summary                              | Date       |
-|---------|----------------------|----------------------|--------------------------------------|------------|
+| ------- | -------------------- | -------------------- | ------------------------------------ | ---------- |
 | 0.1.0   | Miro, Claude & Codex | Miro, Claude & Codex | Initial architecture flows for mulac | 2026-04-14 |

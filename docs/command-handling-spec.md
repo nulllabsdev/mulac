@@ -1,5 +1,8 @@
 # Command Handling Specification
 
+See [item failure isolation](item-failure-isolation.md) for the implemented
+transactional reservation, item-level panic containment, and recovery limits.
+
 ## Overview
 
 `CommandGateway` is the single entry point for all command dispatch. Callers (application code or the inbox consumer) pass a `NewCommandEnvelope` to the gateway; the gateway decides how execution proceeds based on the configured variant:
@@ -13,34 +16,34 @@ The TwoPhased variant guarantees at-least-once execution. Command handlers must 
 
 ## Architecture
 
-The crate follows a hexagonal (ports and adapters) architecture with four layers:
+The crate follows a ports-and-adapters organization. The shared execution core
+is a private module beside HTTP, not an additional runtime service:
 
-```
-domain  ←  application  ←  features  ←  infra adapters
-```
+- **domain**: lifecycle status, metadata helpers, and reservation-timeout policy.
+- **application**: envelopes, errors, storage ports, criteria, gateway, and sweeper.
+- **execution** (`execution/mod.rs`): consumer, reservation specification,
+  dispatcher, handler ports, and typed-handler wrapper; depends on application
+  contracts and event-dispatch ports, not HTTP or a runtime.
+- **HTTP**: request/response contracts, async execution bridge, and framework adapters.
+- **infra adapters**: concrete storage implementing the application ports.
 
-- **domain** (`assembly/domain.rs`): `CommandStatus` — no I/O, no external types
-- **application** (`assembly/application.rs`): port traits, envelopes, error type — no implementation
-- **features** (`record_commands.rs`, `command_consumer.rs`, `stale_command_sweep.rs`): use-case orchestration — depends on ports only
-- **infra adapters** (`assembly/infra_diesel.rs`): concrete I/O — depends on feature and application layers
+External callers import exclusively through the crate's `prelude`. Execution
+implementation modules remain private and expose their types through preludes.
+The kernel's registry and application's worker remain outside this crate.
 
-External callers import exclusively from `lib.rs` via the `prelude` re-export facade.
-
-```
+```text
 lib.rs (prelude facade)
-  ├─ gateway                CommandGateway
-  ├─ dispatcher             CommandDispatcher
-  ├─ record_commands        CommandRecorder, CommandRecorderRepository
-  ├─ command_consumer       CommandConsumer, CommandConsumerRepository, ReservableCommandSpec
-  ├─ stale_command_sweep    CommandSweeper, StaleCommandSpec
-  ├─ assembly/application   NewCommandEnvelope, NewCommandMetadata,
-  │                         CommandEnvelope, CommandMetadata,
-  │                         CommandError, CommandStatus,
-  │                         CommandStorePort, CommandReservePort, CommandProcessPort,
-  │                         CommandHandlerPort, CommandSweepPort
-  └─ assembly/infra_diesel  [feature = "diesel"]
-       CommandEntry, NewCommandEntry,
-       CommandStoreStorage, CommandConsumerStorage, DbPool, build_pool
+  ├─ execution/command_consumer     CommandConsumer
+  ├─ execution/reservable           ReservableCommandSpec
+  ├─ execution/command_dispatcher   CommandDispatcher, ApplicationEvent,
+  │                                CommandHandlerPort, ErasedCommandHandler,
+  │                                wrap_handler
+  ├─ application/command_gateway   CommandGateway
+  ├─ application/stale_command_sweep  CommandSweeper, StaleCommandSpec
+  ├─ application                   envelopes, errors, storage ports
+  ├─ domain                        status and lifecycle policy
+  ├─ http [feature = "api"]        HTTP contracts and adapters
+  └─ infra_diesel [feature = "diesel"]  database repository and entry types
 ```
 
 ## Variants
@@ -69,7 +72,7 @@ Execution is decoupled and durable. The gateway persists a `NewCommandEntry` and
 6. The dispatcher resolves the handler via `CommandHandlerPort` and invokes it.
 7. The handler returns zero or more `EventEnvelope` instances; the dispatcher hands each to the event dispatcher.
 8. On success: the consumer marks the entry `Completed` via `CommandProcessPort`.
-9. On failure: the consumer marks the entry `Failed` and schedules a retry, or `Dead` if the retry limit is exhausted.
+9. On failure: the consumer records `Failed` and clears its reservation. Retry is eligible only below the attempt cap; exhausted entries remain `Failed` for inspection.
 10. A separate sweep job releases entries stuck in `Reserved` longer than the configured timeout.
 
 ## Components
@@ -80,7 +83,7 @@ The single entry point for all command dispatch. Callers never interact with `Co
 
 - Accepts a `NewCommandEnvelope` from any caller. The caller is responsible for supplying a `command_id`; no generation occurs inside the gateway.
 - **Direct**: delegates immediately to `CommandDispatcher`.
-- **TwoPhased**: stores the command via `CommandRecorder` and returns. Does not invoke `CommandDispatcher`.
+- **TwoPhased**: stores the command directly via `Arc<dyn CommandStorePort>` and returns. Does not invoke `CommandDispatcher`.
 
 ### CommandDispatcher
 
@@ -92,14 +95,7 @@ Shared execution engine used by both variants. Not called directly by applicatio
 - Hands each event to the event dispatcher.
 - Returns the combined result to its caller (gateway or consumer).
 
-### CommandRecorder / CommandRecorderRepository
-
-Use case: persist a `NewCommandEnvelope` durably before execution (TwoPhased only).
-
-- Receives a `NewCommandEnvelope` directly; no conversion or ID generation is performed.
-- Delegates persistence to `CommandStorePort`.
-
-### CommandConsumer / CommandConsumerRepository
+### CommandConsumer
 
 Use case: reserve persisted commands and execute them via `CommandDispatcher` (TwoPhased only).
 
@@ -114,32 +110,31 @@ Use case: release stale reservations back to the eligible queue (TwoPhased only)
 
 - Finds all `Reserved` entries whose `reserved_at` is older than the configured timeout.
 - Resets them to `Failed` with a retry backoff, clearing reservation fields.
-- Does **not** increment the attempt counter (only explicit `failed()` calls count as attempts).
+- Does **not** increment the attempt counter (reservation increments attempts, not failure or sweeping).
 
-### CommandStoreStorage (infra, Diesel)
+### DieselPgCommandRepository (infra, Diesel)
 
-Implements `CommandStorePort`. Inserts a new `command_entries` row. Does not touch existing rows on conflict (idempotent recording).
+Implements `CommandStorePort`, `CommandReservePort`, `CommandProcessPort`, and `CommandSweepPort` using one database pool.
 
-### CommandConsumerStorage (infra, Diesel)
-
-Implements `CommandReservePort` and `CommandProcessPort`.
+- **record**: Inserts a new `command_entries` row. Does not touch existing rows on conflict (idempotent recording).
 
 - **reserve**: `SELECT … FOR UPDATE SKIP LOCKED`, then updates status to `Reserved`, assigns `reservation_id` (UUID v7), increments `attempts`. Returns full envelopes.
+  Reservation, raw JSON loading, per-row decoding, and malformed-row failure writes share one transaction. Only healthy envelopes are returned after commit; the candidate limit is not refilled.
 - **completed**: Updates status to `Completed`, clears `reservation_id` and `reserved_at`, sets `processed_at`.
-- **failed**: Evaluates `attempts` against `max_attempts`; transitions to `Failed` (schedules retry) or `Dead` (exhausted). Clears reservation fields. Retry delay: `attempts × 30 seconds`, capped at 2 minutes.
+- **failed**: records `Failed`, even at exhaustion, and clears reservation fields. The reservation attempt cap controls retry eligibility. Failure scheduling uses database time; see [item failure isolation](item-failure-isolation.md) for delay formulas.
 
 ## Models
 
 ### CommandStatus (domain)
 
-| Variant     | Code | Description                                 |
-|-------------|------|---------------------------------------------|
-| `Received`  | `0`  | Stored, eligible for reservation            |
-| `Reserved`  | `2`  | Claimed by a consumer                       |
-| `Failed`    | `4`  | Execution failed; scheduled for retry       |
-| `Completed` | `5`  | Successfully executed and events handed off |
-| `Dead`      | `7`  | Retry limit exhausted                       |
-| `Archive`   | `8`  | Archived (no further processing)            |
+| Variant     | Code | Description                                                                |
+| ----------- | ---- | -------------------------------------------------------------------------- |
+| `Received`  | `0`  | Stored, eligible for reservation                                           |
+| `Reserved`  | `2`  | Claimed by a consumer                                                      |
+| `Failed`    | `4`  | Failure retained for inspection; retry eligible only below the attempt cap |
+| `Completed` | `5`  | Successfully executed and events handed off                                |
+| `Dead`      | `7`  | Legacy/manual terminal status; never an automatic failure outcome          |
+| `Archive`   | `8`  | Archived (no further processing)                                           |
 
 Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion without renumbering). See [ADR-002](adr/002-status-code-gaps.md).
 
@@ -148,7 +143,7 @@ Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion wi
 The gateway input envelope. `command_id` is always `Uuid` — the caller must supply it (UUID v7 recommended). No generation occurs inside the system boundary.
 
 | Field          | Type                         | Description                               |
-|----------------|------------------------------|-------------------------------------------|
+| -------------- | ---------------------------- | ----------------------------------------- |
 | `command_type` | `String`                     | Handler discriminator                     |
 | `payload`      | `String`                     | Raw command body                          |
 | `metadata`     | `Option<NewCommandMetadata>` | Optional routing and correlation metadata |
@@ -156,7 +151,7 @@ The gateway input envelope. `command_id` is always `Uuid` — the caller must su
 ### NewCommandMetadata (application)
 
 | Field            | Type             | Description                                |
-|------------------|------------------|--------------------------------------------|
+| ---------------- | ---------------- | ------------------------------------------ |
 | `command_id`     | `Uuid`           | Stable deduplication ID (required)         |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain            |
 | `causation_id`   | `Option<Uuid>`   | ID of the message that caused this command |
@@ -169,7 +164,7 @@ The gateway input envelope. `command_id` is always `Uuid` — the caller must su
 Read-side envelope returned to the consumer after reservation. Constructed by the infra layer from the stored `CommandEntry`; contains all fields the consumer needs without exposing infra types.
 
 | Field            | Type                      | Description                                    |
-|------------------|---------------------------|------------------------------------------------|
+| ---------------- | ------------------------- | ---------------------------------------------- |
 | `id`             | `Uuid`                    | Entry identifier, used to mark complete/failed |
 | `reservation_id` | `Uuid`                    | Ownership token, required for process calls    |
 | `command_type`   | `String`                  | Handler discriminator                          |
@@ -182,7 +177,7 @@ Read-side envelope returned to the consumer after reservation. Constructed by th
 Decoded metadata attached to a reserved command.
 
 | Field            | Type             | Description                                |
-|------------------|------------------|--------------------------------------------|
+| ---------------- | ---------------- | ------------------------------------------ |
 | `command_id`     | `Uuid`           | Stable deduplication ID                    |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain            |
 | `causation_id`   | `Option<Uuid>`   | ID of the message that caused this command |
@@ -191,7 +186,7 @@ Decoded metadata attached to a reserved command.
 ### ReservableCommandSpec (command_consumer)
 
 | Field          | Default | Description                                        |
-|----------------|---------|----------------------------------------------------|
+| -------------- | ------- | -------------------------------------------------- |
 | `limit`        | —       | Maximum number of entries to reserve per call      |
 | `max_attempts` | `6`     | Entries at or above this attempt count are skipped |
 
@@ -200,14 +195,14 @@ Builds query criteria: `StatusIn([Received, Failed])`, `ScheduledBeforeNow`, `Ma
 ### StaleCommandSpec (stale_command_sweep)
 
 | Field          | Default | Description                                                      |
-|----------------|---------|------------------------------------------------------------------|
+| -------------- | ------- | ---------------------------------------------------------------- |
 | `timeout`      | —       | Staleness threshold; entries reserved longer than this are swept |
 | `max_attempts` | `6`     | Max attempts forwarded to the retry policy                       |
 
 ### CommandError (application)
 
 | Variant              | Description                                      |
-|----------------------|--------------------------------------------------|
+| -------------------- | ------------------------------------------------ |
 | `Storage`            | Storage adapter error                            |
 | `Reservation`        | Reservation query or update failure              |
 | `HandlerNotFound`    | No handler registered for the given command_type |
@@ -251,14 +246,14 @@ async fn execute(&self, envelope: &NewCommandEnvelope) -> Result<Vec<EventEnvelo
 
 ## Infra Models
 
-These types are defined in `assembly/infra_diesel.rs` and are only available with the `diesel` feature. They are not referenced by the application or feature layers.
+These types are defined in `infra_diesel/repository.rs` and are only available with the `diesel` feature. They are not referenced by the application or feature layers.
 
 ### CommandEntry (infra, Diesel)
 
-Queryable struct mapping the full `command_entries` row. Constructed by `CommandConsumerStorage` and converted into `CommandEnvelope` before being returned across the port boundary.
+Queryable struct mapping the full `command_entries` row. Constructed by `DieselPgCommandRepository` and converted into `CommandEnvelope` before being returned across the port boundary.
 
 | Field            | Type                        | Description                               |
-|------------------|-----------------------------|-------------------------------------------|
+| ---------------- | --------------------------- | ----------------------------------------- |
 | `id`             | `Uuid`                      | UUID v7 primary key                       |
 | `command_type`   | `String`                    | Discriminator used to resolve the handler |
 | `status`         | `CommandStatus`             | Lifecycle state                           |
@@ -274,10 +269,10 @@ Queryable struct mapping the full `command_entries` row. Constructed by `Command
 
 ### NewCommandEntry (infra, Diesel)
 
-Insertable struct built from a `NewCommandEnvelope` inside `CommandStoreStorage::record()`. Contains only the fields the application provides; database-managed fields are absent.
+Insertable struct built from a `NewCommandEnvelope` inside `DieselPgCommandRepository::record()`. Contains only the fields the application provides; database-managed fields are absent.
 
 | Field          | Type                        | Description                                           |
-|----------------|-----------------------------|-------------------------------------------------------|
+| -------------- | --------------------------- | ----------------------------------------------------- |
 | `id`           | `Uuid`                      | UUID v7, sourced from `NewCommandMetadata.command_id` |
 | `command_type` | `String`                    | Discriminator used to resolve the handler             |
 | `payload`      | `String`                    | Raw UTF-8 command body                                |
@@ -319,16 +314,16 @@ The primary key is UUID (not BIGSERIAL) because command IDs are generated by the
 
 Applies to `failed()` transitions (TwoPhased variant only):
 
-- Retry delay = `attempts × 30 seconds`
+- Failure retry delay = `max(attempts, 1) × 30 seconds`, measured from database time
 - Cap: 2 minutes per attempt
-- After `max_attempts` (default 6) the entry transitions to `Dead`
+- At `max_attempts` (default 6), failed entries remain `Failed` but are ineligible for automatic reservation
 - Stale sweep does **not** increment the attempt counter
 
 ## Feature Flags
 
-| Feature  | Adds                                                                                                             |
-|----------|------------------------------------------------------------------------------------------------------------------|
-| `diesel` | `CommandEntry`, `NewCommandEntry`, `CommandStoreStorage`, `CommandConsumerStorage`, `DbPool`, Diesel + r2d2 deps |
+| Feature  | Adds                                                                                         |
+| -------- | -------------------------------------------------------------------------------------------- |
+| `diesel` | `CommandEntry`, `NewCommandEntry`, `DieselPgCommandRepository`, `DbPool`, Diesel + r2d2 deps |
 
 ## Examples
 
@@ -392,6 +387,13 @@ let released = sweeper.sweep(&spec).await?;
 ## Document Metadata
 
 | Version | Author                          | Summary                                                                                                                   | Date       |
-|---------|---------------------------------|---------------------------------------------------------------------------------------------------------------------------|------------|
+| ------- | ------------------------------- | ------------------------------------------------------------------------------------------------------------------------- | ---------- |
 | 0.1.0   | Claude::claude-sonnet-4-6::high | Initial command handling technical specification                                                                          | 2026-05-13 |
 | 0.1.1   | Claude::claude-sonnet-4-6::high | Move CommandEntry and NewCommandEntry to infra_diesel; flatten CommandEnvelope; CommandStorePort takes NewCommandEnvelope | 2026-05-13 |
+
+## HTTP boundary
+
+Commanding’s private `http` module owns contracts and execution adaptation, not
+command lifecycle behavior. `CommandConsumer<R>` remains the use case. Existing
+public synchronous/async service types and `api*` feature names are retained.
+Other queues follow the dependency boundaries described in ADR-012.

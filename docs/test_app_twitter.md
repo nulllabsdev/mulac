@@ -60,7 +60,7 @@ Environment variables:
 ## REST API
 
 | Method | Path                    | Response                  |
-|--------|-------------------------|---------------------------|
+| ------ | ----------------------- | ------------------------- |
 | GET    | /health                 | `ok`                      |
 | GET    | /swagger                | Swagger UI                |
 | POST   | /api/tweets             | `TweetDto`                |

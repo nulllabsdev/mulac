@@ -2,6 +2,8 @@
 
 This document describes the core mulac components at the architecture level. It focuses on responsibilities, lifecycle models, and reliability boundaries (not implementation details).
 
+See [item failure isolation](item-failure-isolation.md) for reservation atomicity, per-item panic containment, and recovery limits.
+
 ## Inbox
 
 **Role:**
@@ -21,14 +23,14 @@ The main model is `InboxEntry`, a durable representation of an external message 
 1. `received` - the message was accepted and stored.
 2. `reserved` - an inbox consumer claimed the entry for processing.
 3. `completed` - the entry was successfully handed off to command processing.
-4. `failed` - handoff failed and the entry is waiting for its next scheduled retry time.
-5. `dead` - the retry policy was exhausted and the entry will not be retried automatically.
+4. `failed` - handoff failed and the entry is retained for inspection; eligible for scheduled retry only below the attempt cap.
+5. `dead` - legacy/manual terminal state; automatic failures remain `failed`.
 
 **Rules:**
 1. A message should be acknowledged only after durable storage.
 2. A reserved entry should not be processed by more than one consumer at the same time.
 3. Failed entries are retried with backoff; inbox-triggered command handling must tolerate at-least-once execution.
-4. After the configured retry limit is reached, the entry moves to `dead`.
+4. At the configured attempt cap, the entry remains `failed` for inspection and is no longer eligible for automatic retry.
 5. Completion means responsibility moved from inbox processing to command processing.
 
 ## Command Dispatcher
@@ -113,18 +115,18 @@ The main model is `OutboxEntry`, a durable representation of outbound work.
 1. `received` - the event was accepted and stored.
 2. `reserved` - an outbox consumer claimed the entry for delivery.
 3. `completed` - the broker accepted the outbound message.
-4. `failed` - delivery failed and the entry is waiting for its next scheduled retry time.
-5. `dead` - the retry policy was exhausted, or a non-retriable transformation failure occurred; the entry will not be retried automatically.
+4. `failed` - delivery failed and the entry is retained for inspection; eligible for scheduled retry only below the attempt cap.
+5. `dead` - explicit administrative terminal state; automatic failures remain `failed`.
 
 **Rules:**
 1. The outbox should consider an event accepted only after it has been stored durably.
 2. A reserved entry should not be processed by more than one consumer at the same time.
 3. If broker acceptance succeeds but marking `completed` fails, the entry can be retried and the outbound message may be published again; external consumers must tolerate duplicates.
-4. Transport failures follow the retry schedule; non-retriable transformation failures (such as serialisation errors) bypass the retry schedule and move the entry directly to `dead`.
+4. Both transport and transformation failures use `failed`; the attempt cap bounds retries without removing failure evidence.
 5. Completion means responsibility moved from the outbox to the external transport.
 
 ## Document Metadata
 
 | Version | Author               | Reviewers            | Summary                                       | Date       |
-|---------|----------------------|----------------------|-----------------------------------------------|------------|
+| ------- | -------------------- | -------------------- | --------------------------------------------- | ---------- |
 | 0.1.0   | Miro, Claude & Codex | Miro, Claude & Codex | High-level mulac components overview document | 2026-04-14 |

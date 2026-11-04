@@ -789,7 +789,7 @@ This slice supports durable outbox semantics with a caller-provided publisher po
 ## Risk Register
 
 | Risk                                                                        | Impact                                     | Mitigation                                                                                          |
-|-----------------------------------------------------------------------------|--------------------------------------------|-----------------------------------------------------------------------------------------------------|
+| --------------------------------------------------------------------------- | ------------------------------------------ | --------------------------------------------------------------------------------------------------- |
 | Outbox ID and event ID semantics drift from event dispatcher implementation | Duplicate rows or broken idempotency       | Keep `event_id` as required input and primary key; add duplicate-record tests                       |
 | Async trait style differs from inbox implementation                         | Inconsistent public API or compiler issues | Match the style used by the current crate baseline before implementing ports                        |
 | Diesel JSONB newtype is hard to wire                                        | Storage adapter delays                     | Copy the inbox JSONB newtype pattern and keep metadata serde-friendly                               |

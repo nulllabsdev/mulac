@@ -1,7 +1,7 @@
 # Suggestion-Driven Documentation
 
 | Field   | Value      |
-|---------|------------|
+| ------- | ---------- |
 | Version | 0.1        |
 | Date    | 2026-04-12 |
 

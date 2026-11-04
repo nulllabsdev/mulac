@@ -77,7 +77,7 @@ Callers import through `feature::prelude::*`. Internal submodules are private.
 **Core commands and events:**
 
 | Command           | Event             | HTTP route                          |
-|-------------------|-------------------|-------------------------------------|
+| ----------------- | ----------------- | ----------------------------------- |
 | PostTweet         | TweetPosted       | POST /api/tweets                    |
 | DeleteTweet       | TweetDeleted      | DELETE /api/tweets/:id              |
 | Retweet           | TweetRetweeted    | POST /api/tweets/:id/retweet        |
@@ -106,7 +106,7 @@ enum InboundEntity {
 ## Command outcome matrix (§9.4)
 
 | Command           | Case                             | HTTP | Event | Outbox |
-|-------------------|----------------------------------|------|-------|--------|
+| ----------------- | -------------------------------- | ---- | ----- | ------ |
 | PostTweet         | new tweet_id                     | 200  | yes   | yes    |
 | PostTweet         | duplicate tweet_id               | 409  | no    | no     |
 | DeleteTweet       | active tweet, matching author    | 204  | yes   | yes    |
@@ -195,7 +195,7 @@ Default `BIND_ADDR`: `127.0.0.1:33002`
 All application routes under `/api`. Root routes: `/health`, `/swagger`.
 
 | Method | Path                    | Description             |
-|--------|-------------------------|-------------------------|
+| ------ | ----------------------- | ----------------------- |
 | GET    | /health                 | Health check            |
 | GET    | /swagger                | Swagger UI              |
 | POST   | /api/tweets             | Post tweet              |

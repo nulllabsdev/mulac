@@ -1,7 +1,7 @@
 # test_app_twitter Reorganization Plan — Final
 
 | Field                | Value                                                                                                                                                  |
-|----------------------|--------------------------------------------------------------------------------------------------------------------------------------------------------|
+| -------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Status               | Approved for implementation                                                                                                                            |
 | Created              | 2026-05-23                                                                                                                                             |
 | Target app           | `test_app_twitter` (currently `app-twitter`)                                                                                                           |
@@ -213,7 +213,7 @@ If not implemented, both must be explicitly listed as deferred in
 ## 4. Gap inventory
 
 | Element              | `test_app_todo`                                       | `test_app_twitter` current                                                   | Phase  |
-|----------------------|-------------------------------------------------------|------------------------------------------------------------------------------|--------|
+| -------------------- | ----------------------------------------------------- | ---------------------------------------------------------------------------- | ------ |
 | Crate name           | `test_app_todo`                                       | `app-twitter`                                                                | 0      |
 | App state            | `AppState { pool, mulac }`                            | `pub use kernel::AppState;` (src/state.rs)                                   | 1      |
 | App assembly         | `src/assembly/*`                                      | none                                                                         | 1      |
@@ -225,7 +225,7 @@ If not implemented, both must be explicitly listed as deferred in
 | Gateway              | two-phased command/event persistence                  | `kernel::boot()` (src/main.rs)                                               | 4      |
 | Consumers + workers  | owned by `MulacState`, spawned at boot                | none in production                                                           | 4      |
 | Outbox subscriber    | app-owned, writes `outbox_messages` keyed by event_id | kernel builder `outbox_subscriber()` only                                    | 4      |
-| Feature layout       | flat files, private internals, one `pub mod prelude`       | nested `pub` aggregator modules                                              | 5      |
+| Feature layout       | flat files, private internals, one `pub mod prelude`  | nested `pub` aggregator modules                                              | 5      |
 | Inbox HTTP API       | `POST /api/messages/commands`                         | none                                                                         | 6      |
 | Outbox HTTP API      | `GET /api/messages/outbox`                            | none                                                                         | 6      |
 | Tests                | split files + `tests/utils.rs`                        | one `tests/post_tweet.rs` with inline helpers                                | 7      |
@@ -299,7 +299,7 @@ migrations/2026-05-23-000002_mention_notifications/
 ## 6. File-by-file change map
 
 | Current path                                                                          | Target path                      | Action             | Notes                                                                                          |
-|---------------------------------------------------------------------------------------|----------------------------------|--------------------|------------------------------------------------------------------------------------------------|
+| ------------------------------------------------------------------------------------- | -------------------------------- | ------------------ | ---------------------------------------------------------------------------------------------- |
 | `Cargo.toml`                                                                          | `Cargo.toml`                     | rewrite headers    | Rename pkg, lib, bin. Update `[[bin]]` path in Phase 3.                                        |
 | `src/main.rs`                                                                         | `src/assembly/bin/twitterapp.rs` | move + rewrite     | `serve` / `migrate` subcommands; drop `KernelConfig::from_env()`.                              |
 | `src/lib.rs`                                                                          | `src/lib.rs`                     | rewrite            | Private feature mods, `TwitterEvent`, `AppState`, root-private inbox/outbox.                   |
@@ -483,7 +483,7 @@ Centralize reusable helpers in `assembly/application.rs` or
 Mount application routes under `/api`. Keep `/health` and `/swagger` at root.
 
 | Method | Path                      | Command                        | Event               |
-|--------|---------------------------|--------------------------------|---------------------|
+| ------ | ------------------------- | ------------------------------ | ------------------- |
 | POST   | `/api/tweets`             | `PostTweet`                    | `TweetPosted`       |
 | DELETE | `/api/tweets/:id`         | `DeleteTweet`                  | `TweetDeleted`      |
 | POST   | `/api/tweets/:id/retweet` | `Retweet`                      | `TweetRetweeted`    |
@@ -500,7 +500,7 @@ Mount application routes under `/api`. Keep `/health` and `/swagger` at root.
 ### 9.2 Optional extension routes
 
 | Method | Path                     | Purpose                          |
-|--------|--------------------------|----------------------------------|
+| ------ | ------------------------ | -------------------------------- |
 | GET    | `/api/timeline/:user_id` | List timeline rows for one user. |
 
 Mention notifications do not need a public read route unless separately
@@ -522,7 +522,7 @@ Lock these semantics now so implementation and tests do not invent behavior
 ad hoc.
 
 | Command             | Case                                               | HTTP result                | App row change                    | Event emitted | Outbox row |
-|---------------------|----------------------------------------------------|----------------------------|-----------------------------------|---------------|------------|
+| ------------------- | -------------------------------------------------- | -------------------------- | --------------------------------- | ------------- | ---------- |
 | `PostTweet`         | new `tweet_id`                                     | `200` + `TweetDto`         | insert tweet                      | yes           | yes        |
 | `PostTweet`         | duplicate `tweet_id`                               | `409`                      | no                                | no            | no         |
 | `DeleteTweet`       | active tweet exists and author matches             | `204`                      | set `deleted_at`                  | yes           | yes        |
@@ -660,7 +660,7 @@ Handler-side error messages and the interpreter must agree for the
 remaining real-failure cases:
 
 | Handler `CommandError::HandlerExecution` message  | Mapped `AppError`           | Status |
-|---------------------------------------------------|-----------------------------|--------|
+| ------------------------------------------------- | --------------------------- | ------ |
 | starts with `"tweet not found"`                   | `NotFound`                  | 404    |
 | starts with `"user not found"`                    | `NotFound`                  | 404    |
 | starts with `"validation failed: "` (Todo style)  | `Validation(remainder)`     | 400    |
@@ -962,7 +962,7 @@ no runtime `diesel-cli` is needed for `migrate`.
 ### 11.2 Existing tables stay unchanged
 
 | Migration                           | Tables                                                                |
-|-------------------------------------|-----------------------------------------------------------------------|
+| ----------------------------------- | --------------------------------------------------------------------- |
 | `2025-01-01-000001_infrastructure/` | `inbox_entries`, `command_entries`, `event_entries`, `outbox_entries` |
 | `2025-01-01-000002_app_tables/`     | `tweets`, `follows`, `likes`, `direct_messages`, `timelines`          |
 
@@ -1111,7 +1111,7 @@ serde tagged.
 Supported core input:
 
 | `type`              | Required fields                                      |
-|---------------------|------------------------------------------------------|
+| ------------------- | ---------------------------------------------------- |
 | `PostTweet`         | `tweet_id`, `author_id`, `content`                   |
 | `DeleteTweet`       | `tweet_id`, `author_id`                              |
 | `Retweet`           | `retweet_id`, `original_tweet_id`, `author_id`       |
@@ -1212,7 +1212,7 @@ endpoint produces consistent `InboundEntity` values without inventing
 behavior at implementation time.
 
 | Command             | §9.4 case                               | HTTP route status | Inbox `InboundEntity`                                                                                         |
-|---------------------|-----------------------------------------|-------------------|---------------------------------------------------------------------------------------------------------------|
+| ------------------- | --------------------------------------- | ----------------- | ------------------------------------------------------------------------------------------------------------- |
 | `PostTweet`         | new `tweet_id`                          | `200`             | `Tweet(read_after_write(tweet_id))`                                                                           |
 | `DeleteTweet`       | success (soft delete)                   | `204`             | `NoEntity` — body is `InboundResponse { entity: NoEntity }`                                                   |
 | `Retweet`           | new `retweet_id`                        | `200`             | `Tweet(read_after_write(retweet_id))`                                                                         |
@@ -1377,7 +1377,7 @@ Acceptance:
 Convert one feature at a time:
 
 | Order | Current file                          | New file                     | Route                          |
-|-------|---------------------------------------|------------------------------|--------------------------------|
+| ----- | ------------------------------------- | ---------------------------- | ------------------------------ |
 | 1     | `src/tweets/post_tweet.rs`            | `src/tweet_post.rs`          | `POST /api/tweets`             |
 | 2     | `src/tweets/delete_tweet.rs`          | `src/tweet_delete.rs`        | `DELETE /api/tweets/:id`       |
 | 3     | `src/tweets/retweet.rs`               | `src/tweet_retweet.rs`       | `POST /api/tweets/:id/retweet` |
@@ -1559,7 +1559,7 @@ Use `reqwest` against a spawned real Poem server, not
 Minimum core test matrix:
 
 | Test file                | Required assertions                                                                                                    |
-|--------------------------|------------------------------------------------------------------------------------------------------------------------|
+| ------------------------ | ---------------------------------------------------------------------------------------------------------------------- |
 | `tweet_post.rs`          | HTTP success, tweet row, command/event/outbox entries; blank/too-long (scalar count) → 400; duplicate `tweet_id` → 409 |
 | `tweet_delete.rs`        | delete happy path, missing / already-deleted / mismatched author → 404, no event/outbox on 404                         |
 | `tweet_retweet.rs`       | retweet row links original, missing original → 404, duplicate retweet_id → 409, event + outbox                         |
@@ -1575,7 +1575,7 @@ Minimum core test matrix:
 Optional extension tests:
 
 | Test file                 | Required assertions                                             |
-|---------------------------|-----------------------------------------------------------------|
+| ------------------------- | --------------------------------------------------------------- |
 | `timeline_list.rs`        | timeline read endpoint returns rows in documented order         |
 | `mention_notification.rs` | `@handle` creates notification and `UserMentioned` outbox event |
 
@@ -1696,7 +1696,7 @@ DATABASE_URL=... cargo run --manifest-path test_app_twitter/Cargo.toml -- serve
 Manual probes against a running server with `BIND_ADDR=127.0.0.1:33002`:
 
 | Probe                         | Expected                                                                 |
-|-------------------------------|--------------------------------------------------------------------------|
+| ----------------------------- | ------------------------------------------------------------------------ |
 | `GET /health`                 | `200 ok`                                                                 |
 | `GET /swagger`                | Swagger UI lists core endpoints + inbox + outbox                         |
 | `POST /api/tweets`            | tweet row + completed command/event entries + pending outbox             |
@@ -1714,7 +1714,7 @@ Manual probes against a running server with `BIND_ADDR=127.0.0.1:33002`:
 Optional extension probes:
 
 | Probe                        | Expected                                                          |
-|------------------------------|-------------------------------------------------------------------|
+| ---------------------------- | ----------------------------------------------------------------- |
 | `GET /api/timeline/:user_id` | returns timeline rows in documented order                         |
 | tweet content with `@handle` | mention notification row and `UserMentioned` outbox event created |
 

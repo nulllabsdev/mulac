@@ -9,13 +9,13 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 ## Checklist
 
 - [x] Task 1 — Cargo.toml and module scaffold
-- [x] Task 2 — Domain layer (`commanding/assembly/domain.rs`)
-- [x] Task 3 — Application layer (`commanding/assembly/application.rs`)
-- [x] Task 4 — Record commands (`commanding/record_commands.rs`)
-- [x] Task 5 — Command consumer (`commanding/command_consumer.rs`)
-- [x] Task 6 — Stale command sweep (`commanding/stale_command_sweep.rs`)
-- [x] Task 7 — Dispatcher (`commanding/dispatcher.rs`)
-- [x] Task 8 — Gateway (`commanding/gateway.rs`)
+- [x] Task 2 — Domain layer (`commanding/domain/mod.rs`)
+- [x] Task 3 — Application layer (`commanding/application/mod.rs`)
+- [x] Task 4 — Record commands (`commanding/application/command_recorder.rs`)
+- [x] Task 5 — Command consumer (`commanding/application/command_consumer.rs`)
+- [x] Task 6 — Stale command sweep (`commanding/application/stale_command_sweep.rs`)
+- [x] Task 7 — Dispatcher (`commanding/application/command_dispatcher.rs`)
+- [x] Task 8 — Gateway (`commanding/application/command_gateway.rs`)
 - [x] Task 9 — Diesel infra (`commanding/assembly/infra_diesel.rs`)
 - [x] Task 10 — Public API facade (`lib.rs`)
 - [x] Verification
@@ -27,8 +27,8 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 - `write_side/src/lib.rs` — needs `pub mod prelude` facade
 - `write_side/src/commanding/mod.rs` — needs restructuring
 - `write_side/src/commanding/model.rs` — `CommandStatus` moves to domain layer
-- `write_side/src/commanding/gateway.rs` — full rewrite
-- `write_side/src/commanding/dispatcher.rs` — implement
+- `write_side/src/commanding/application/command_gateway.rs` — full rewrite
+- `write_side/src/commanding/application/command_dispatcher.rs` — implement
 - `write_side/src/commanding/recorder.rs` — rename + implement → `record_commands.rs`
 - `write_side/Cargo.toml` — add deps and feature flag
 - `write_side/src/eventing/assembly/application.rs` — minimal `EventEnvelope` stub (new file)
@@ -48,16 +48,16 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 
 ---
 
-### Task 2 — Domain layer (`commanding/assembly/domain.rs`)
+### Task 2 — Domain layer (`commanding/domain/mod.rs`)
 
 - [x] Move `CommandStatus` (with all conversions and `as_str`) from `model.rs` into `domain.rs`
-- [x] Define `Criterion` enum: `StatusIn(Vec<CommandStatus>)`, `ScheduledBeforeNow`, `MaxAttempts(i32)`, `ReservedBefore(DateTime<Utc>)`, `OrderByScheduledAtAsc`
+- [x] Define `Criterion` in `application/criteria.rs` (application query selection, not domain state): `StatusIn(Vec<CommandStatus>)`, `ScheduledBeforeNow`, `MaxAttempts(i32)`, `ReservedBefore(DateTime<Utc>)`, `OrderByScheduledAtAsc`
 - [x] Leave `model.rs` as a re-export shim for backwards compat
 - Note: `CommandEntry` and `NewCommandEntry` belong in `infra_diesel` (Task 9), not domain
 
 ---
 
-### Task 3 — Application layer (`commanding/assembly/application.rs`)
+### Task 3 — Application layer (`commanding/application/mod.rs`)
 
 - [ ] Define `NewCommandMetadata { command_id: Uuid, correlation_id: Option<Uuid>, causation_id: Option<Uuid>, source: Option<String> }` with `serde` derives
 - [ ] Define `NewCommandEnvelope { command_type: String, payload: String, metadata: Option<NewCommandMetadata> }` — gateway input
@@ -71,7 +71,7 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 
 ---
 
-### Task 4 — Record commands (`commanding/record_commands.rs`)
+### Task 4 — Record commands (`commanding/application/command_recorder.rs`)
 
 - [ ] Define `CommandRecorderRepository { store: Arc<dyn CommandStorePort> }`
 - [ ] Define `CommandRecorder { repository: CommandRecorderRepository }` with constructor `new(store: Arc<dyn CommandStorePort>)`
@@ -82,21 +82,20 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 
 ---
 
-### Task 5 — Command consumer (`commanding/command_consumer.rs`)
+### Task 5 — Command consumer (`commanding/application/command_consumer.rs`)
 
 - [ ] Define `ReservableCommandSpec { limit: usize, max_attempts: i32 }` with `DEFAULT_MAX_ATTEMPTS: i32 = 6` and `fn criteria(&self) -> Vec<Criterion>`
-- [ ] Define `CommandConsumerRepository { reserve: Arc<dyn CommandReservePort>, process: Arc<dyn CommandProcessPort> }`
-- [ ] Define `CommandConsumer { repository: CommandConsumerRepository, dispatcher: Arc<CommandDispatcher> }` with constructor
+- [ ] Define `CommandConsumer<R>` storing `Arc<R>`, with `R` implementing both `CommandReservePort` and `CommandProcessPort`, plus `Arc<CommandDispatcher>`
 - [ ] Implement `consume(&self, spec: &ReservableCommandSpec) -> Result<(), Vec<CommandError>>`:
   - Reserve entries via `repository.reserve(spec)`
   - For each `CommandEnvelope`, reconstruct `NewCommandEnvelope` and pass to `dispatcher.dispatch()`
-  - On success: call `repository.process.completed(id, reservation_id)`
-  - On failure: call `repository.process.failed(id, reservation_id, spec.max_attempts)`
+  - On success: call `repository.completed(id, reservation_id)`
+  - On failure: call `repository.failed(id, reservation_id, spec.max_attempts)`
   - Collect all errors; return `Err(errors)` if non-empty
 
 ---
 
-### Task 6 — Stale command sweep (`commanding/stale_command_sweep.rs`)
+### Task 6 — Stale command sweep (`commanding/application/stale_command_sweep.rs`)
 
 - [ ] Define `StaleCommandSpec { timeout: Duration, max_attempts: i32 }` with `fn criteria(&self) -> Vec<Criterion>` returning `[ReservedBefore(Utc::now() - timeout)]`
 - [ ] Define `CommandSweeper { port: Arc<dyn CommandSweepPort> }` with constructor
@@ -104,7 +103,7 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 
 ---
 
-### Task 7 — Dispatcher (`commanding/dispatcher.rs`)
+### Task 7 — Dispatcher (`commanding/application/command_dispatcher.rs`)
 
 - [ ] Define a minimal `EventDispatchPort` trait in `eventing/assembly/application.rs`: `async fn dispatch(&self, event: EventEnvelope) -> Result<(), CommandError>`
 - [ ] Define `CommandDispatcher { handler: Arc<dyn CommandHandlerPort>, event_dispatcher: Arc<dyn EventDispatchPort> }` with constructor
@@ -115,7 +114,7 @@ The `write_side` crate has a scaffolded `commanding/` module with status models 
 
 ---
 
-### Task 8 — Gateway (`commanding/gateway.rs`)
+### Task 8 — Gateway (`commanding/application/command_gateway.rs`)
 
 - [ ] Rewrite `CommandGateway` with a `variant` field: `Direct { dispatcher: Arc<CommandDispatcher> }` or `TwoPhased { recorder: Arc<CommandRecorder> }`
 - [ ] Implement `dispatch(&self, envelope: NewCommandEnvelope) -> Result<(), CommandError>`:
@@ -132,15 +131,15 @@ Follow `inbox/src/assembly/infra_diesel.rs` exactly:
 - [ ] Define `CommandEntry` struct (Queryable, all DB columns) and `NewCommandEntry` struct (Insertable, application-provided fields only)
 - [ ] Define `MetadataJsonb(serde_json::Value)` newtype with `FromSql`/`ToSql` for Diesel JSONB
 - [ ] Define Diesel schema for `command_entries` table (all columns)
-- [ ] Implement conversion `NewCommandEnvelope` → `NewCommandEntry` (used inside `CommandStoreStorage::record()`)
-- [ ] Implement conversion `CommandEntry` → `CommandEnvelope` (used inside `CommandConsumerStorage::reserve()`)
+- [ ] Implement conversion `NewCommandEnvelope` → `NewCommandEntry` (used inside `DieselPgCommandRepository::record()`)
+- [ ] Implement conversion `CommandEntry` → `CommandEnvelope` (used inside `DieselPgCommandRepository::reserve()`)
 - [ ] Define `DbPool` type alias and `build_pool(url: &str) -> DbPool`
-- [ ] Define `CommandStoreStorage(DbPool)`; implement `CommandStorePort`: convert envelope → entry, INSERT with `ON CONFLICT DO NOTHING`
-- [ ] Define `CommandConsumerStorage(DbPool)`; implement `CommandReservePort`: CTE with `SELECT … FOR UPDATE SKIP LOCKED`, update to `Reserved`, assign UUID v7 `reservation_id`, increment `attempts`, return `Vec<CommandEnvelope>`
-- [ ] Implement `CommandProcessPort` on `CommandConsumerStorage`:
+- [ ] Define `DieselPgCommandRepository(DbPool)`; implement `CommandStorePort`: convert envelope → entry, INSERT with `ON CONFLICT DO NOTHING`
+- [ ] Implement `CommandReservePort` on `DieselPgCommandRepository`: CTE with `SELECT … FOR UPDATE SKIP LOCKED`, update to `Reserved`, assign UUID v7 `reservation_id`, increment `attempts`, return `Vec<CommandEnvelope>`
+- [ ] Implement `CommandProcessPort` on `DieselPgCommandRepository`:
   - `completed()`: set status=Completed, clear reservation fields, set `processed_at`
   - `failed()`: if `attempts >= max_attempts` → Dead; else → Failed with `scheduled_at = now + attempts * 30s` (cap 120s)
-- [ ] Implement `CommandSweepPort` on `CommandConsumerStorage`: UPDATE where `status=Reserved AND reserved_at < cutoff`, transition to Failed/Dead, clear reservation fields (do not increment `attempts`)
+- [ ] Implement `CommandSweepPort` on `DieselPgCommandRepository`: UPDATE where `status=Reserved AND reserved_at < cutoff`, transition to Failed/Dead, clear reservation fields (do not increment `attempts`)
 
 ---
 
@@ -150,10 +149,10 @@ Follow `inbox/src/assembly/infra_diesel.rs` exactly:
   - Gateway: `CommandGateway`
   - Dispatcher: `CommandDispatcher`
   - Record: `CommandRecorder`, `CommandRecorderRepository`
-  - Consumer: `CommandConsumer`, `CommandConsumerRepository`, `ReservableCommandSpec`
+  - Consumer: `CommandConsumer`, `ReservableCommandSpec`
   - Sweep: `CommandSweeper`, `StaleCommandSpec`
   - Application: `NewCommandEnvelope`, `NewCommandMetadata`, `CommandEnvelope`, `CommandMetadata`, `CommandError`, `CommandStatus`, all port traits
-  - Infra (feature-gated): `CommandEntry`, `NewCommandEntry`, `CommandStoreStorage`, `CommandConsumerStorage`, `DbPool`, `build_pool`
+  - Infra (feature-gated): `CommandEntry`, `NewCommandEntry`, `DieselPgCommandRepository`, `DbPool`, `build_pool`
 
 ---
 

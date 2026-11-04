@@ -11,31 +11,26 @@ This repository contains both technical specifications and Rust crate implementa
 - Detailed spec (end-to-end flows): [docs/architecture-spec.md](docs/architecture-spec.md)
 - Lifecycle states and rules: [docs/components.md](docs/components.md)
 - Outbox technical specification: [docs/outbox-spec.md](docs/outbox-spec.md)
+- Inbox batch flows, Mermaid diagrams, and SVGs: [libs/inbox/flow.md](libs/inbox/flow.md)
+- Event batch flows, Mermaid diagrams, and SVGs: [libs/eventing/flow.md](libs/eventing/flow.md)
+- Outbox batch flows, Mermaid diagrams, and SVGs: [libs/outbox/flow.md](libs/outbox/flow.md)
 
-## Inbox HTTP adapters
+## HTTP API features
 
-Services expose `POST /inbox` and `POST /inbox/run` through shared crates
-([ADR-009](docs/adr/009-inbox-http-adapters.md)):
+Each core crate (`mulac-commanding`, `mulac-eventing`, `mulac-inbox`,
+`mulac-outbox`) owns its API and framework adapters. Defaults enable `diesel`
+and synchronous `api` services. Opt into `api-tokio`, `api-testing`, `axum`,
+`axum-openapi`, or `poem` on the core dependency. For a database-free HTTP
+build use `default-features = false` and the desired framework feature.
 
-- [`libs/mulac_inbox_api`](libs/mulac_inbox_api) — framework-free contract, validation and service.
-- [`libs/mulac_poem`](libs/mulac_poem) — Poem/poem-openapi adapter.
-- [`libs/mulac_axum`](libs/mulac_axum) — Axum adapter with optional Utoipa schemas.
+Services are exported through `prelude`; adapters through `prelude::axum` or
+`prelude::poem`. The small `mulac_http` support crate preserves shared HTTP
+schemas without depending on queues. The former four API crates and two
+framework adapter crates are removed.
 
-## Queue HTTP adapters
-
-`POST /commands/run`, `POST /events/run` and `POST /outbox/run` follow the
-same pattern ([ADR-010](docs/adr/010-queue-http-apis.md)):
-[`libs/mulac_commanding_api`](libs/mulac_commanding_api),
-[`libs/mulac_eventing_api`](libs/mulac_eventing_api) and
-[`libs/mulac_outbox_api`](libs/mulac_outbox_api) hold the contracts and services, and
-both adapters expose them behind their opt-in `commanding`, `eventing` and
-`outbox` features. The outbox answers `503` while no publisher is configured.
-
-Run `make ci` to format-check, lint and test `libs` and `kernel`, to verify
-that each adapter depends only on its own framework, and to check that each
-opt-in adapter feature builds alone, stays out of the default build and pulls
-in no Diesel. It also checks that `mulac_outbox_api` and the adapters never depend
-on lapin.
+See [ADR-011](docs/adr/011-core-http-features.md) for the feature matrix,
+import migration and dependency guarantees. Run `make ci` for library/kernel
+tests, HTTP behavior/schema tests, and feature isolation checks.
 
 ## Optional application event revisions
 
@@ -46,30 +41,3 @@ IDs, correlation, causation or payloads. Event reservation and subscriber
 conversions preserve it. Outbox metadata has the same optional field; recorders
 must copy it from the originating event. Missing legacy metadata stays missing.
 This supplies provenance, not ordering or atomic command/event persistence.
-
-## Publish crates
-
-Run `make pack_and_publish` (or `make publish`) to package all libraries and the
-kernel in dependency order, add them to `~/work/labs/crates`, commit the registry
-artifacts, and push its `main` branch. GitHub Pages then deploys the registry at
-<https://null-labs-hq.github.io/crates/>. This does not commit or push mulac itself.
-
-Requires Python 3.11+, Cargo, `margo`, an initialized registry checkout on `main`,
-and GitHub push access. HTTPS authentication uses `gh auth git-credential` when
-`gh` is installed. Override `CRATES_DIR`, `MARGO`, or `CRATES_PUSH_URL` as needed.
-Keep unrelated registry changes out of the generated index/assets and crate paths.
-
-Packaging uses a temporary loopback sparse registry so new dependencies resolve
-before Pages deploys; published manifests retain the hosted registry URL. Identical
-retries are safe, and an existing version with different bytes is rejected.
-Packaging retains `--no-verify`; run `make ci` before publishing a release.
-
-For local staging without committing or pushing:
-
-```sh
-python3 scripts/pack_and_publish.py --registry "$HOME/work/labs/crates"
-```
-
-Run `make test-publishing` for publishing helper tests. A failed push leaves the
-local registry commit intact; fix authentication or reconcile remote changes and
-retry. No force-push is performed.

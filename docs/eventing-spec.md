@@ -1,5 +1,8 @@
 # Eventing Specification
 
+See [item failure isolation](item-failure-isolation.md) for the implemented
+transactional reservation, item-level panic containment, and recovery limits.
+
 ## Overview
 
 The eventing module is the write-side component responsible for accepting domain events and delivering them to subscribers. It is the counterpart to command handling: command handlers produce `NewEventEnvelope` instances, and the eventing module either delivers them immediately or stores them durably for later delivery.
@@ -7,7 +10,7 @@ The eventing module is the write-side component responsible for accepting domain
 `EventGateway` is the single entry point for event dispatch. Callers, including `CommandDispatcher`, pass a `NewEventEnvelope` to the gateway; the gateway decides how execution proceeds based on the configured variant:
 
 - **Direct**: the gateway immediately delegates to `EventDispatcher`, which invokes the configured subscriber port synchronously. No durable state; errors propagate immediately to the caller.
-- **TwoPhased**: the gateway persists a durable `NewEventEntry` and returns. A separate consumer loop later reserves each entry and passes it to `EventDispatcher`, with retry and stale-reservation recovery.
+- **TwoPhased**: the gateway persists a durable `NewEventEntry` and returns. A separate consumer loop later reserves each entry and passes it to `EventDispatcher`, with bounded retry and stale-reservation recovery.
 
 `EventDispatcher` is the shared delivery engine for both variants. It receives an event envelope and invokes the registered subscriber port. The subscriber port may represent a single subscriber, a composite subscriber registry, or an adapter such as the Outbox.
 
@@ -15,36 +18,16 @@ The TwoPhased variant guarantees at-least-once delivery. Event subscribers must 
 
 ## Architecture
 
-The module follows the same hexagonal (ports and adapters) architecture as command handling:
-
-```
-domain  ←  application  ←  features  ←  infra adapters
-```
-
-- **domain** (`eventing/assembly/domain.rs`): `EventStatus` and query criteria — no I/O, no external adapter types
-- **application** (`eventing/assembly/application.rs`): envelopes, port traits, error type — no implementation
-- **features** (`record_events.rs`, `event_consumer.rs`, `stale_event_sweep.rs`, `dispatcher.rs`, `gateway.rs`): use-case orchestration — depends on ports only
-- **infra adapters** (`eventing/assembly/infra_diesel.rs`): concrete I/O — depends on feature and application layers
-
-External callers import exclusively from `lib.rs` via the `prelude` re-export facade.
-
-```text
-lib.rs (prelude facade)
-  ├─ gateway                EventGateway
-  ├─ dispatcher             EventDispatcher, EventSubscriberPort
-  ├─ record_events          EventRecorder, EventRecorderRepository
-  ├─ event_consumer         EventConsumer, EventConsumerRepository, ReservableEventSpec,
-  │                         EventReservePort
-  ├─ stale_event_sweep      EventSweeper, StaleEventSpec, EventSweepPort
-  ├─ assembly/application   NewEventEnvelope, NewEventMetadata,
-  │                         EventEnvelope, EventMetadata,
-  │                         EventError,
-  │                         EventDispatchPort, EventStorePort, EventProcessPort
-  ├─ assembly/domain        EventStatus, UnknownEventStatus
-  └─ assembly/infra_diesel  [feature = "diesel"]
-       EventEntry, NewEventEntry,
-       EventStoreStorage, EventConsumerStorage, DbPool, build_pool
-```
+Private layers separate domain status/timeout rules, application envelopes and
+ports, the execution core (consumer, dispatcher and reservation spec), Diesel persistence, and HTTP adaptation. Only
+`prelude` is public. `DieselPgEventRepository::new(pool)` implements all four storage ports.
+`EventGateway` and `EventSweeper` take their trait-object ports; `EventConsumer<R>` holds one `Arc<R>`
+implementing reserve/process. `AsyncEventingService` wraps the consumer and erases `R` at the
+blocking-task boundary. There is no synchronous HTTP service, so callers without
+Tokio use the consumer directly. Synchronous code supports borrowed repositories.
+Transport adapters retain their independent acknowledgment/publication behavior.
+See [ADR-012](adr/012-unified-queue-repositories.md) and
+[ADR-014](adr/014-merge-sibling-execution-bridges.md).
 
 ## Variants
 
@@ -71,19 +54,19 @@ Execution is decoupled and durable. The gateway persists a `NewEventEntry` and r
 5. For each reserved `EventEnvelope`, the consumer reconstructs a `NewEventEnvelope` and passes it to `EventDispatcher`.
 6. The dispatcher invokes the subscriber port.
 7. On success: the consumer marks the entry `Completed` via `EventProcessPort`.
-8. On failure: the consumer marks the entry `Failed` and schedules a retry, or `Dead` if the retry limit is exhausted.
+8. On failure: the consumer records `Failed` and clears its reservation. Retry is eligible only below the attempt cap; exhausted entries remain `Failed` for inspection.
 9. A separate sweep job releases entries stuck in `Reserved` longer than the configured timeout.
 
 ## Components
 
 ### EventGateway
 
-The single entry point for all event dispatch. Callers never interact with `EventRecorder` directly.
+The single entry point for all event dispatch. Callers go through the gateway rather than calling the store port directly.
 
 - Accepts a `NewEventEnvelope` from command handling or application code.
 - Requires `metadata.event_id`; the caller is responsible for supplying it. UUID v7 is recommended.
 - **Direct**: delegates immediately to `EventDispatcher`.
-- **TwoPhased**: stores the event via `EventRecorder` and returns. Does not invoke `EventDispatcher`.
+- **TwoPhased**: persists the event through `EventStorePort` and returns. Does not invoke `EventDispatcher`. The envelope is passed through unchanged, with no ID generation outside infra conversion, and the Diesel adapter ignores duplicate inserts for the same `event_id` (`ON CONFLICT DO NOTHING`).
 - Implements the command-side `EventDispatchPort` so `CommandDispatcher` can hand off produced events without depending on eventing internals.
 
 ### EventDispatcher
@@ -95,15 +78,7 @@ Shared delivery engine used by both variants. Not called directly by application
 - Returns success only after the subscriber port has accepted the event.
 - Treats zero subscribers as success when the subscriber port is implemented as a registry/composite; absence of subscribers is not a dispatch error.
 
-### EventRecorder / EventRecorderRepository
-
-Use case: persist a `NewEventEnvelope` durably before subscriber delivery (TwoPhased only).
-
-- Receives a `NewEventEnvelope` directly; no conversion or ID generation is performed outside infra conversion.
-- Delegates persistence to `EventStorePort`.
-- Duplicate inserts for the same `event_id` are ignored by the Diesel adapter (`ON CONFLICT DO NOTHING`).
-
-### EventConsumer / EventConsumerRepository
+### EventConsumer<R>
 
 Use case: reserve persisted events and deliver them via `EventDispatcher` (TwoPhased only).
 
@@ -118,34 +93,49 @@ Use case: reserve persisted events and deliver them via `EventDispatcher` (TwoPh
 Use case: release stale reservations back to the eligible queue (TwoPhased only).
 
 - Finds all `Reserved` entries whose `reserved_at` is older than the configured timeout.
-- Resets them to `Failed` with retry scheduling, clearing reservation fields.
-- Does **not** increment the attempt counter; only explicit `failed()` calls count as attempts.
+- Sets all timed-out rows to `Failed`, including exhausted rows, and clears reservation fields. Only entries below the attempt cap can be reserved again.
+- Does **not** increment the attempt counter; reservation increments attempts, not failure or sweeping.
 
-### EventStoreStorage (infra, Diesel)
+### DieselPgEventRepository: recording
 
 Implements `EventStorePort`. Inserts a new `event_entries` row. Does not touch existing rows on conflict, making event recording idempotent by `event_id`.
 
-### EventConsumerStorage (infra, Diesel)
+### DieselPgEventRepository: processing and recovery
 
 Implements `EventReservePort`, `EventProcessPort`, and `EventSweepPort`.
 
 - **reserve**: uses `SELECT … FOR UPDATE SKIP LOCKED`, then updates status to `Reserved`, assigns `reservation_id` (UUID v7), increments `attempts`, and returns full event envelopes.
+  Reservation, raw JSON loading, per-row decoding, and malformed-row failure writes share one transaction. Only healthy envelopes are returned after commit; the candidate limit is not refilled.
 - **completed**: updates status to `Completed`, clears `reservation_id` and `reserved_at`, and sets `processed_at`.
-- **failed**: evaluates `attempts` against `max_attempts`; transitions to `Failed` (schedules retry) or `Dead` (exhausted). Clears reservation fields.
+- **failed**: records `Failed`, even at exhaustion, and clears reservation fields. The reservation attempt cap controls retry eligibility. Failure scheduling uses database time; see [item failure isolation](item-failure-isolation.md) for delay formulas.
 - **sweep**: releases stale `Reserved` entries by clearing reservation fields and scheduling another attempt without incrementing `attempts`.
+
+## Timeout recovery contract
+
+Sweeps run in one transaction and take one PostgreSQL `transaction_timestamp()`.
+Only `Reserved` rows with non-null `reserved_at < database_time - timeout` are
+selected, with blocking row locks held through the update. A pure internal policy
+calculates each outcome; one set-based update clears reservation fields, preserves
+existing errors and appends the timeout reason. Errors roll back the entire sweep.
+Attempts do not change. The default retry limit is 6; configure the same limit on
+consumer and sweeper. No recovery worker is started automatically.
+
+Retry delay is `attempts × 30 seconds`, uncapped. Both retryable and exhausted
+rows get `scheduled_at = database_time + delay`.
+Explicit failure paths also use database time; they always retain `Failed` status.
 
 ## Models
 
 ### EventStatus (domain)
 
-| Variant     | Code | Description                                   |
-|-------------|------|-----------------------------------------------|
-| `Received`  | `0`  | Stored, eligible for reservation              |
-| `Reserved`  | `2`  | Claimed by a consumer                         |
-| `Failed`    | `4`  | Delivery failed; scheduled for retry          |
-| `Completed` | `5`  | Successfully delivered to the subscriber port |
-| `Dead`      | `7`  | Retry limit exhausted                         |
-| `Archive`   | `8`  | Archived (no further processing)              |
+| Variant     | Code | Description                                                                |
+| ----------- | ---- | -------------------------------------------------------------------------- |
+| `Received`  | `0`  | Stored, eligible for reservation                                           |
+| `Reserved`  | `2`  | Claimed by a consumer                                                      |
+| `Failed`    | `4`  | Failure retained for inspection; retry eligible only below the attempt cap |
+| `Completed` | `5`  | Successfully delivered to the subscriber port                              |
+| `Dead`      | `7`  | Legacy/manual terminal status; never an automatic failure outcome          |
+| `Archive`   | `8`  | Archived (no further processing)                                           |
 
 Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion without renumbering). See [ADR-002](adr/002-status-code-gaps.md).
 
@@ -154,7 +144,7 @@ Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion wi
 The gateway input envelope. `event_id` is always supplied inside metadata; no generation occurs inside the system boundary.
 
 | Field        | Type                       | Description              |
-|--------------|----------------------------|--------------------------|
+| ------------ | -------------------------- | ------------------------ |
 | `event_type` | `String`                   | Subscriber discriminator |
 | `payload`    | `String`                   | Raw event body           |
 | `metadata`   | `Option<NewEventMetadata>` | Routing/correlation data |
@@ -162,7 +152,7 @@ The gateway input envelope. `event_id` is always supplied inside metadata; no ge
 ### NewEventMetadata (application)
 
 | Field            | Type             | Description                                      |
-|------------------|------------------|--------------------------------------------------|
+| ---------------- | ---------------- | ------------------------------------------------ |
 | `event_id`       | `Uuid`           | Stable deduplication ID (required)               |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain                  |
 | `causation_id`   | `Option<Uuid>`   | ID of the command/message that caused this event |
@@ -175,7 +165,7 @@ When events are produced from a command, `causation_id` should be the command's 
 Read-side envelope returned to the consumer after reservation. Constructed by the infra layer from the stored `EventEntry`; contains all fields the consumer needs without exposing infra types.
 
 | Field            | Type                    | Description                                    |
-|------------------|-------------------------|------------------------------------------------|
+| ---------------- | ----------------------- | ---------------------------------------------- |
 | `id`             | `Uuid`                  | Entry identifier, used to mark complete/failed |
 | `reservation_id` | `Uuid`                  | Ownership token, required for process calls    |
 | `event_type`     | `String`                | Subscriber discriminator                       |
@@ -186,7 +176,7 @@ Read-side envelope returned to the consumer after reservation. Constructed by th
 ### EventMetadata (application)
 
 | Field            | Type             | Description                                      |
-|------------------|------------------|--------------------------------------------------|
+| ---------------- | ---------------- | ------------------------------------------------ |
 | `event_id`       | `Uuid`           | Stable deduplication ID                          |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain                  |
 | `causation_id`   | `Option<Uuid>`   | ID of the command/message that caused this event |
@@ -195,7 +185,7 @@ Read-side envelope returned to the consumer after reservation. Constructed by th
 ### ReservableEventSpec (event_consumer)
 
 | Field          | Default | Description                                        |
-|----------------|---------|----------------------------------------------------|
+| -------------- | ------- | -------------------------------------------------- |
 | `limit`        | —       | Maximum number of entries to reserve per call      |
 | `max_attempts` | `6`     | Entries at or above this attempt count are skipped |
 
@@ -204,16 +194,16 @@ Builds query criteria: `StatusIn([Received, Failed])`, `ScheduledBeforeNow`, `Ma
 ### StaleEventSpec (stale_event_sweep)
 
 | Field          | Default | Description                                                      |
-|----------------|---------|------------------------------------------------------------------|
+| -------------- | ------- | ---------------------------------------------------------------- |
 | `timeout`      | —       | Staleness threshold; entries reserved longer than this are swept |
 | `max_attempts` | `6`     | Max attempts forwarded to the retry policy                       |
 
-Builds query criteria: `ReservedBefore(Utc::now() - timeout)`.
+The repository calculates the strict cutoff from the database transaction timestamp and the timeout; the spec reads no clock.
 
 ### EventError (application)
 
 | Variant               | Description                                 |
-|-----------------------|---------------------------------------------|
+| --------------------- | ------------------------------------------- |
 | `Storage`             | Storage adapter error                       |
 | `Reservation`         | Reservation query or update failure         |
 | `SubscriberNotFound`  | No subscriber registry/handler is available |
@@ -268,14 +258,14 @@ Implementations may be concrete subscribers, composite subscriber registries, or
 
 ## Infra Models
 
-These types are defined in `eventing/assembly/infra_diesel.rs` and are only available with the `diesel` feature. They are not referenced by application or feature layers.
+These types are defined in `eventing/infra_diesel/` and are only available with the `diesel` feature. They are not referenced by application or feature layers.
 
 ### EventEntry (infra, Diesel)
 
-Queryable struct mapping the full `event_entries` row. Constructed by `EventConsumerStorage` and converted into `EventEnvelope` before being returned across the port boundary.
+Queryable struct mapping the full `event_entries` row. Constructed by `DieselPgEventRepository` and converted into `EventEnvelope` before being returned across the port boundary.
 
 | Field            | Type                    | Description                             |
-|------------------|-------------------------|-----------------------------------------|
+| ---------------- | ----------------------- | --------------------------------------- |
 | `id`             | `Uuid`                  | Primary key; equals `metadata.event_id` |
 | `event_type`     | `String`                | Subscriber discriminator                |
 | `status`         | `i32`                   | Encoded `EventStatus`                   |
@@ -291,10 +281,10 @@ Queryable struct mapping the full `event_entries` row. Constructed by `EventCons
 
 ### NewEventEntry (infra, Diesel)
 
-Insertable struct used only by `EventStoreStorage`.
+Insertable struct used only by `DieselPgEventRepository`.
 
 | Field          | Type                    | Description                          |
-|----------------|-------------------------|--------------------------------------|
+| -------------- | ----------------------- | ------------------------------------ |
 | `id`           | `Uuid`                  | Primary key from `metadata.event_id` |
 | `event_type`   | `String`                | Subscriber discriminator             |
 | `payload`      | `String`                | Raw event body                       |
@@ -333,9 +323,9 @@ Recommended indexes:
 
 Applies to `failed()` transitions:
 
-- Retry delay = `attempts × 30 seconds`
+- Failure retry delay = `max(attempts, 1) × 30 seconds`, measured from database time
 - Cap: 2 minutes per attempt
-- After `max_attempts` (default 6) the entry transitions to `Dead`
+- At `max_attempts` (default 6), failed entries remain `Failed` but are ineligible for automatic reservation
 - Stale sweep does **not** increment the attempt counter
 
 ## Reliability Semantics
@@ -360,7 +350,7 @@ Applies to `failed()` transitions:
 ## Feature Flags
 
 | Feature  | Adds                                                                |
-|----------|---------------------------------------------------------------------|
+| -------- | ------------------------------------------------------------------- |
 | `diesel` | PostgreSQL/Diesel storage adapters, schema module, and infra models |
 
 ## Examples
@@ -391,29 +381,18 @@ gateway.dispatch(NewEventEnvelope {
 
 ```rust
 use std::sync::Arc;
-use write_side::prelude::{
-    EventConsumer, EventConsumerRepository, EventDispatcher, EventGateway, EventRecorder,
-    EventRecorderRepository, EventStoreStorage, EventConsumerStorage, ReservableEventSpec,
-};
-
-let store = Arc::new(EventStoreStorage::new(pool.clone()));
-let recorder_repo = Arc::new(EventRecorderRepository::new(store));
-let recorder = Arc::new(EventRecorder::new(recorder_repo));
-let gateway = EventGateway::two_phased(recorder);
-
-// CommandDispatcher calls gateway.dispatch(event) and returns after durable storage.
-
-let consumer_storage = Arc::new(EventConsumerStorage::new(pool));
-let consumer_repo = EventConsumerRepository::new(consumer_storage.clone(), consumer_storage);
+use eventing::prelude::{DieselPgEventRepository, EventConsumer,
+    EventDispatcher, EventGateway, ReservableEventSpec};
+let repository = Arc::new(DieselPgEventRepository::new(pool));
+let gateway = EventGateway::two_phased(repository.clone());
 let dispatcher = Arc::new(EventDispatcher::new(subscriber));
-let consumer = EventConsumer::new(consumer_repo, dispatcher);
-
+let consumer = EventConsumer::new(repository, dispatcher);
 consumer.consume(&ReservableEventSpec::new(100))?;
 ```
 
 ## Implementation Notes
 
-- `EventStatus` should live in `eventing/assembly/domain.rs`; `eventing/model.rs` remains only as a backwards-compatible re-export shim.
+- `EventStatus` should live in `eventing/domain/mod.rs`; the obsolete `model.rs` placeholder is removed.
 - `EventDispatchPort` is the boundary between command handling and eventing. The command side should not depend on eventing concrete types beyond this port and `NewEventEnvelope`.
 - `EventSubscriberPort` should remain deliberately small. Subscriber resolution, fan-out, filtering, and outbox transformation belong in implementations behind the port, not in the core dispatcher.
 - `EventGateway` should reject envelopes with missing metadata before either direct dispatch or durable recording, because `event_id` is required for deduplication.
@@ -422,5 +401,15 @@ consumer.consume(&ReservableEventSpec::new(100))?;
 ## Document Metadata
 
 | Version | Author | Reviewers            | Summary                                  | Date       |
-|---------|--------|----------------------|------------------------------------------|------------|
+| ------- | ------ | -------------------- | ---------------------------------------- | ---------- |
 | 0.1.0   | Codex  | Miro, Claude & Codex | Initial eventing technical specification | 2026-05-13 |
+
+## Reusable HTTP endpoints
+
+Framework preludes expose `event_routes(service)` and `EventingApi::new(service)`.
+Both accept `impl Into<AsyncEventingService>`, so `kernel.event_consumer()` can be
+passed directly.
+Relative `POST /run` processes a batch.
+The host owns mount prefixes, authentication, authorization and middleware.
+Existing custom adapters remain available; HTTP status/body contracts and Cargo
+feature names are unchanged. The shared Poem run schemas remain in `mulac_http`.

@@ -89,68 +89,42 @@ let cmd: Command = match message.try_into() {
 Only clone when a value is reused or shared ownership is required:
 
 ```rust
-let repository = InboxRecorderRepository::new(store);
+let recorder = OutboxRecorder::new(store);
 ```
 
 Prefer this over:
 
 ```rust
-let repository = InboxRecorderRepository::new(store.clone());
+let recorder = OutboxRecorder::new(store.clone());
 ```
 
 when `store` is not used afterward.
 
-### Use `Arc<dyn Trait>` for cloneable shared dependencies
+### Choose dependency representation at the boundary
 
-Use `Arc<dyn Trait>` when repositories or services need cheap cloning and shared ownership across workers:
-
-```rust
-pub struct InboxRecorderRepository {
-    store: Arc<dyn InboxStorePort>,
-}
-```
-
-Use generics only when you explicitly want the containing type to become generic:
-
-```rust
-pub struct InboxRecorderRepository<S> {
-    store: S,
-}
-```
+Gateways and recorders take `Arc<dyn StorePort>` and sweepers take
+`Arc<dyn SweepPort>`. Consumers use one `Arc<R>` where `R` implements reserve and
+process ports. Do not impose `'static` on synchronous code. Async HTTP bridges erase
+repository types at the blocking-task boundary, where `'static` is required; there
+are no synchronous HTTP services. Dispatcher and publisher dependencies remain
+separate. See [ADR-012](adr/012-unified-queue-repositories.md) and
+[ADR-014](adr/014-merge-sibling-execution-bridges.md).
 
 ## Module organization
 
 ### Keep dependency direction clear
 
-Preferred direction:
+Domain rules have no storage or runtime dependencies. Application owns envelopes
+and ports. Execution owns the synchronous consumers and dispatchers. Diesel
+implements the storage ports. HTTP adaptation validates requests and formats
+responses outside application and execution.
 
-```text
-domain <- application <- features <- infra adapters
-```
+### One concrete repository per queue
 
-Avoid application modules depending on feature-specific modules. If an application trait needs a type, that type likely belongs in `application` rather than `features`.
-
-### Separate repositories by use case
-
-Prefer feature-specific repositories over one generic repository:
-
-```text
-record_messages/InboxRecorderRepository
-inbox_consumer/InboxConsumerRepository
-```
-
-Each repository should depend only on the ports needed by that feature.
-
-### Separate storage adapters by use case
-
-Prefer concrete storage adapters that match repository responsibilities:
-
-```text
-InboxStoreStorage      // implements InboxStorePort
-InboxConsumerStorage   // implements InboxReservePort + InboxProcessPort
-```
-
-Avoid one large storage type implementing unrelated ports unless the use cases are intentionally coupled.
+A queue's `DieselPg…Repository::new(pool)` implements store, reserve, process,
+and sweep ports. Share it across the store-port owner and consumer using `Arc`; do not
+insert forwarding repository wrappers or create a generic table-driven queue.
+Pure timeout policies belong in domain; SQL persists their computed outcomes.
 
 ### Keep infrastructure in infra modules
 
@@ -168,10 +142,10 @@ Feature modules should express use cases and ports, not database or broker imple
 External callers should import from the root facade:
 
 ```rust
-use inbox::prelude::{InboxRecorder, InboxRecorderRepository};
+use inbox::prelude::{DieselPgInboxRepository, InboxConsumer};
 ```
 
-Inside the crate, prefer direct internal module paths instead of importing from `crate::prelude`.
+Inside the crate, import through each feature’s prelude rather than its implementation submodules.
 
 ## Inbox-specific rules
 

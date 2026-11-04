@@ -1,47 +1,30 @@
 # Outbox Specification
 
+See [item failure isolation](item-failure-isolation.md) for the implemented
+transactional reservation, item-level panic containment, and recovery limits.
+
 ## Overview
 
 The outbox crate provides a durable outbound message buffer that decouples internal event processing from external transport publication. It accepts event envelopes from the event dispatcher, stores outbound work atomically, and exposes stored entries to consumers that publish each entry to a broker or other external transport. The event dispatcher is the only caller expected to record into the outbox.
 
-The outbox guarantees at-least-once delivery to the external transport boundary. Reservation, retry scheduling, non-retriable dead-lettering, and stale-reservation recovery are built in. Duplicate publication is possible and must be tolerated by downstream systems.
+The outbox guarantees at-least-once delivery to the external transport boundary. Reservation, retry scheduling, failure recording, and stale-reservation recovery are built in. Duplicate publication is possible and must be tolerated by downstream systems.
 
 ## Architecture
 
-The crate follows the same hexagonal (ports and adapters) architecture as the inbox crate:
-
-```
-domain  ←  application  ←  features  ←  infra adapters
-```
-
-- **domain** (`assembly/domain.rs`): core models and status machine — no I/O, no external transport types
-- **application** (`assembly/application.rs`): port traits, event/outbound envelopes, and errors — no implementation
-- **features** (`record_events.rs`, `outbox_consumer.rs`, `stale_reservation_sweep.rs`): use-case orchestration — depends on ports only
-- **infra adapters** (`assembly/infra_diesel.rs`, `amqp_publisher.rs`, `confirmed_amqp_publisher.rs`): concrete I/O — depends on feature and application layers
-
-External callers import exclusively from `lib.rs` via the `prelude` re-export facade.
-
-```
-lib.rs (prelude facade)
-  ├─ record_events          OutboxRecorder, OutboxRecorderRepository
-  ├─ outbox_consumer        OutboxConsumer, OutboxConsumerRepository, ReservableOutboxSpec
-  ├─ stale_reservation_sweep  ReservationSweeper, StaleReservationSpec
-  ├─ assembly/application   NewOutboxEnvelope, NewOutboxMetadata,
-  │                         OutboxEntryEnvelope, OutboxEntryMetadata,
-  │                         OutboundMessageEnvelope, NewOutboxEntry, OutboxError,
-  │                         OutboxStorePort, OutboxReservePort, OutboxProcessPort,
-  │                         OutboxPublisherPort
-  ├─ assembly/infra_diesel  [feature = "diesel"]
-  │    OutboxStoreStorage, OutboxConsumerStorage, DbPool
-  ├─ amqp_publisher         [feature = "amqp"]
-  │    AmqpPublisher, AmqpPublishConfig
-  └─ confirmed_amqp_publisher  [feature = "amqp"]
-       ConfirmedAmqpPublisher
-```
+Private layers separate domain status/timeout rules, application envelopes and
+ports, the execution core (consumer and reservation spec), Diesel persistence, and HTTP adaptation. Only
+`prelude` is public. `DieselPgOutboxRepository::new(pool)` implements all four storage ports.
+`OutboxRecorder` and `ReservationSweeper` take their trait-object ports; `OutboxConsumer<R>` holds one `Arc<R>`
+implementing reserve/process. `AsyncOutboxService` wraps the consumer and erases `R` at the
+blocking-task boundary. There is no synchronous HTTP service, so callers without
+Tokio use the consumer directly. Synchronous code supports borrowed repositories.
+Transport adapters retain their independent acknowledgment/publication behavior.
+See [ADR-012](adr/012-unified-queue-repositories.md) and
+[ADR-014](adr/014-merge-sibling-execution-bridges.md).
 
 ## Components
 
-### OutboxRecorder / OutboxRecorderRepository
+### OutboxRecorder
 
 Use case: accept an event from the event dispatcher and record outbound work durably.
 
@@ -54,7 +37,7 @@ Use case: accept an event from the event dispatcher and record outbound work dur
 - Returns success only after durable storage succeeds.
 - Rejects routing errors before storage, so invalid routing does not create an outbox row.
 
-### OutboxConsumer / OutboxConsumerRepository
+### OutboxConsumer<R>
 
 Use case: reserve stored outbound work and publish it to an external transport.
 
@@ -62,8 +45,8 @@ Use case: reserve stored outbound work and publish it to an external transport.
 - Converts each `OutboxEntryEnvelope` into an `OutboundMessageEnvelope`.
 - Publishes each outbound message via `OutboxPublisherPort` and waits for broker acceptance.
 - Marks each entry `Completed` after broker acceptance.
-- Marks each entry `Failed` when publication fails with a retriable transport error.
-- Marks each entry `Dead` when post-acceptance transformation fails permanently, such as payload serialisation.
+- Marks each entry `Failed` on processing or completion error, including recoverable unwinding panics.
+- Conversion failures also become `Failed`; the automatic consumer never calls `dead()`.
 - Returns all errors collected across the batch; does not abort early.
 
 ### ReservationSweeper
@@ -71,20 +54,21 @@ Use case: reserve stored outbound work and publish it to an external transport.
 Use case: release stale reservations back to the eligible queue.
 
 - Finds all `Reserved` entries whose `reserved_at` is older than the configured timeout.
-- Resets them to `Failed` with retry scheduling, clearing reservation fields.
-- Does not increment the attempt counter; only explicit `failed()` calls count as attempts.
+- Sets all timed-out rows to `Failed`, including exhausted rows, and clears reservation fields. Only entries below the attempt cap can be reserved again.
+- Does not increment the attempt counter; reservation increments attempts, not failure or sweeping.
 
-### OutboxStoreStorage (infra, Diesel)
+### DieselPgOutboxRepository: recording
 
 Implements `OutboxStorePort`. Inserts a new `outbox_entries` row. Does not touch existing rows on conflict. The insert, or an idempotent conflict on an already-recorded event ID, is the outbox acceptance boundary.
 
-### OutboxConsumerStorage (infra, Diesel)
+### DieselPgOutboxRepository: processing and recovery
 
 Implements `OutboxReservePort`, `OutboxProcessPort`, and `OutboxSweepPort`.
 
 - **reserve**: `SELECT … FOR UPDATE SKIP LOCKED`, then updates status to `Reserved`, assigns `reservation_id` (UUID v7), increments `attempts`, and returns full envelopes.
+  Reservation, raw JSON loading, per-row decoding, and malformed-row failure writes share one transaction. Only healthy envelopes are returned after commit; the candidate limit is not refilled.
 - **completed**: Updates status to `Completed`, clears `reservation_id` and `reserved_at`, sets `processed_at`.
-- **failed**: Evaluates `attempts` against `max_attempts`; transitions to `Failed` with retry scheduling or `Dead` when exhausted. Clears reservation fields.
+- **failed**: records `Failed`, even at exhaustion, and clears reservation fields. The reservation attempt cap controls retry eligibility. Failure scheduling uses database time; see [item failure isolation](item-failure-isolation.md) for delay formulas.
 - **dead**: Transitions directly to `Dead`, records the failure reason when available, and clears reservation fields without scheduling retry.
 
 ### AmqpPublisher
@@ -115,22 +99,36 @@ not count as published unless the broker routed and confirmed it.
 - Connecting and publishing are bounded by a timeout, 10 seconds by default
   (`ConfirmedAmqpPublisher::DEFAULT_TIMEOUT`, `with_timeout`).
 - `publish` never creates a runtime. It needs a current Tokio runtime handle
-  and must run on that runtime's blocking pool, as `mulac_outbox_api`'s
+  and must run on that runtime's blocking pool, as `outbox_api`'s
   `AsyncOutboxService` does.
 - Errors are fixed strings without broker diagnostics:
 
-| Outcome | Error |
-|---------|-------|
-| Connection, channel or publish failure, or an unparseable URL | `transport error: RabbitMQ connection or publication failed` |
-| Timeout | `transport error: RabbitMQ publication timed out` |
-| No current runtime | `transport error: RabbitMQ publication requires the application runtime` |
-| `Ack` with a returned (unroutable) message | `routing error: RabbitMQ returned an unroutable message` |
-| `Nack` | `publish error: RabbitMQ negatively acknowledged publication` |
-| Confirms not active | `publish error: RabbitMQ did not confirm publication` |
+| Outcome                                                       | Error                                                                    |
+| ------------------------------------------------------------- | ------------------------------------------------------------------------ |
+| Connection, channel or publish failure, or an unparseable URL | `transport error: RabbitMQ connection or publication failed`             |
+| Timeout                                                       | `transport error: RabbitMQ publication timed out`                        |
+| No current runtime                                            | `transport error: RabbitMQ publication requires the application runtime` |
+| `Ack` with a returned (unroutable) message                    | `routing error: RabbitMQ returned an unroutable message`                 |
+| `Nack`                                                        | `publish error: RabbitMQ negatively acknowledged publication`            |
+| Confirms not active                                           | `publish error: RabbitMQ did not confirm publication`                    |
 
 The broker test is ignored by default; run it with
 `AMQP_URL_TEST=amqp://… cargo test -p mulac-outbox --features amqp -- --ignored`
 from `libs/`.
+
+## Timeout recovery contract
+
+Sweeps run in one transaction and take one PostgreSQL `transaction_timestamp()`.
+Only `Reserved` rows with non-null `reserved_at < database_time - timeout` are
+selected, with blocking row locks held through the update. A pure internal policy
+calculates each outcome; one set-based update clears reservation fields, preserves
+existing errors and appends the timeout reason. Errors roll back the entire sweep.
+Attempts do not change. The default retry limit is 6; configure the same limit on
+consumer and sweeper. No recovery worker is started automatically.
+
+Retry delay is `min(max(attempts, 1) × 30 seconds, 120 seconds)`. Exhausted
+rows keep their previous `scheduled_at`; retryable rows use database time + delay.
+Explicit failure paths now use database time; manual outbox `dead()` remains separate.
 
 ## Models
 
@@ -139,7 +137,7 @@ from `libs/`.
 The core domain model for stored outbound work.
 
 | Field            | Type                    | Description                                      |
-|------------------|-------------------------|--------------------------------------------------|
+| ---------------- | ----------------------- | ------------------------------------------------ |
 | `id`             | `Uuid`                  | UUID v7 primary key, sourced from event metadata |
 | `status`         | `OutboxStatus`          | Lifecycle state                                  |
 | `payload`        | `String`                | Serialised event payload                         |
@@ -155,14 +153,14 @@ The core domain model for stored outbound work.
 
 ### OutboxStatus (domain)
 
-| Variant     | Code | Description                                    |
-|-------------|------|------------------------------------------------|
-| `Received`  | `0`  | Stored, eligible for reservation               |
-| `Reserved`  | `2`  | Claimed by an outbox consumer                  |
-| `Failed`    | `4`  | Publication failed; scheduled for retry        |
-| `Completed` | `5`  | Broker accepted the outbound message           |
-| `Dead`      | `7`  | Retry limit exhausted or non-retriable failure |
-| `Archive`   | `8`  | Archived (no further processing)               |
+| Variant     | Code | Description                                                                |
+| ----------- | ---- | -------------------------------------------------------------------------- |
+| `Received`  | `0`  | Stored, eligible for reservation                                           |
+| `Reserved`  | `2`  | Claimed by an outbox consumer                                              |
+| `Failed`    | `4`  | Failure retained for inspection; retry eligible only below the attempt cap |
+| `Completed` | `5`  | Broker accepted the outbound message                                       |
+| `Dead`      | `7`  | Legacy/manual terminal status; never an automatic failure outcome          |
+| `Archive`   | `8`  | Archived (no further processing)                                           |
 
 Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion without renumbering). See [ADR-002](adr/002-status-code-gaps.md).
 
@@ -171,7 +169,7 @@ Numeric codes use intentional gaps (1, 3, 6 are reserved for future insertion wi
 Event-dispatcher-facing input before storage. The event dispatcher must provide the stable event identity; the outbox does not generate it.
 
 | Field      | Type                | Description                               |
-|------------|---------------------|-------------------------------------------|
+| ---------- | ------------------- | ----------------------------------------- |
 | `payload`  | `String`            | Event payload before outbound publication |
 | `metadata` | `NewOutboxMetadata` | Required event and routing metadata       |
 
@@ -180,7 +178,7 @@ Event-dispatcher-facing input before storage. The event dispatcher must provide 
 Metadata accepted from the event dispatcher.
 
 | Field            | Type             | Description                                          |
-|------------------|------------------|------------------------------------------------------|
+| ---------------- | ---------------- | ---------------------------------------------------- |
 | `event_id`       | `Uuid`           | Stable event ID; becomes `OutboxEntry.id`            |
 | `message_id`     | `Option<Uuid>`   | Optional outbound message ID; defaults to `event_id` |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain                      |
@@ -195,7 +193,7 @@ Metadata accepted from the event dispatcher.
 Decoded metadata attached to a stored or reserved `OutboxEntry`. `message_id` is always present after recording.
 
 | Field            | Type             | Description                                          |
-|------------------|------------------|------------------------------------------------------|
+| ---------------- | ---------------- | ---------------------------------------------------- |
 | `event_id`       | `Uuid`           | Original event identifier                            |
 | `message_id`     | `Uuid`           | Stable outbound message ID / idempotency key         |
 | `correlation_id` | `Option<Uuid>`   | Cross-service correlation chain                      |
@@ -210,7 +208,7 @@ Decoded metadata attached to a stored or reserved `OutboxEntry`. `message_id` is
 Read-side envelope returned to consumers after reservation.
 
 | Field      | Type                  | Description             |
-|------------|-----------------------|-------------------------|
+| ---------- | --------------------- | ----------------------- |
 | `message`  | `OutboxEntry`         | The stored domain model |
 | `metadata` | `OutboxEntryMetadata` | Decoded metadata        |
 
@@ -219,7 +217,7 @@ Read-side envelope returned to consumers after reservation.
 Write-side struct passed to `OutboxStorePort` for insertion. Contains only the fields supplied or derived during acceptance; database-managed fields (`attempts`, `reservation_id`, `reserved_at`, `updated_at`, `processed_at`, `last_error`) are absent.
 
 | Field          | Type                  | Description                                        |
-|----------------|-----------------------|----------------------------------------------------|
+| -------------- | --------------------- | -------------------------------------------------- |
 | `id`           | `Uuid`                | UUID v7, sourced from `NewOutboxMetadata.event_id` |
 | `payload`      | `String`              | Serialised event payload                           |
 | `meta`         | `OutboxEntryMetadata` | JSONB-serialised routing metadata                  |
@@ -231,14 +229,14 @@ Write-side struct passed to `OutboxStorePort` for insertion. Contains only the f
 Transport-facing outbound message after reservation and transformation.
 
 | Field      | Type                  | Description                          |
-|------------|-----------------------|--------------------------------------|
+| ---------- | --------------------- | ------------------------------------ |
 | `payload`  | `Vec<u8>`             | Bytes sent to the external transport |
 | `metadata` | `OutboxEntryMetadata` | Routing and message properties       |
 
 ### ReservableOutboxSpec (outbox_consumer)
 
 | Field          | Default | Description                                        |
-|----------------|---------|----------------------------------------------------|
+| -------------- | ------- | -------------------------------------------------- |
 | `limit`        | —       | Maximum number of entries to reserve per call      |
 | `max_attempts` | `6`     | Entries at or above this attempt count are skipped |
 
@@ -247,14 +245,14 @@ Builds query criteria: `StatusIn([Received, Failed])`, `ScheduledBeforeNow`, `Ma
 ### StaleReservationSpec (stale_reservation_sweep)
 
 | Field          | Default | Description                                                      |
-|----------------|---------|------------------------------------------------------------------|
+| -------------- | ------- | ---------------------------------------------------------------- |
 | `timeout`      | —       | Staleness threshold; entries reserved longer than this are swept |
 | `max_attempts` | `6`     | Max attempts forwarded to the retry policy                       |
 
 ### OutboxError (application)
 
 | Variant              | Description                                     |
-|----------------------|-------------------------------------------------|
+| -------------------- | ----------------------------------------------- |
 | `Storage`            | Storage adapter error                           |
 | `Routing`            | Missing or unresolvable routing key             |
 | `Serialization`      | Payload cannot be converted for the transport   |
@@ -269,33 +267,33 @@ Builds query criteria: `StatusIn([Received, Failed])`, `ScheduledBeforeNow`, `Ma
 ### OutboxStorePort
 
 ```rust
-async fn record(&self, entry: &NewOutboxEntry) -> Result<(), OutboxError>;
+fn record(&self, entry: &NewOutboxEntry) -> Result<(), OutboxError>;
 ```
 
 ### OutboxReservePort
 
 ```rust
-async fn reserve(&self, spec: &ReservableOutboxSpec) -> Result<Vec<OutboxEntryEnvelope>, OutboxError>;
+fn reserve(&self, spec: &ReservableOutboxSpec) -> Result<Vec<OutboxEntryEnvelope>, OutboxError>;
 ```
 
 ### OutboxProcessPort
 
 ```rust
-async fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), OutboxError>;
-async fn failed(&self, id: Uuid, reservation_id: Uuid, max_attempts: i32, reason: Option<String>) -> Result<(), OutboxError>;
-async fn dead(&self, id: Uuid, reservation_id: Uuid, reason: Option<String>) -> Result<(), OutboxError>;
+fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), OutboxError>;
+fn failed(&self, id: Uuid, reservation_id: Uuid, max_attempts: i32, reason: Option<String>) -> Result<(), OutboxError>;
+fn dead(&self, id: Uuid, reservation_id: Uuid, reason: Option<String>) -> Result<(), OutboxError>;
 ```
 
 ### OutboxSweepPort
 
 ```rust
-async fn sweep(&self, spec: &StaleReservationSpec) -> Result<u64, OutboxError>;
+fn sweep(&self, spec: &StaleReservationSpec) -> Result<u64, OutboxError>;
 ```
 
 ### OutboxPublisherPort
 
 ```rust
-async fn publish(&self, envelope: OutboundMessageEnvelope) -> Result<(), OutboxError>;
+fn publish(&self, envelope: OutboundMessageEnvelope) -> Result<(), OutboxError>;
 ```
 
 ## Database Schema
@@ -330,13 +328,13 @@ The primary key is UUID (not BIGSERIAL) because the event ID is generated before
 
 ## Retry Policy
 
-Applies to retriable `failed()` transitions caused by transport publication failures:
+Applies to all automatic `failed()` transitions, including conversion and publication failures:
 
-- Retry delay = `attempts × 30 seconds`
+- Failure retry delay = `max(attempts, 1) × 30 seconds`, measured from database time
 - Cap: 2 minutes per attempt
-- After `max_attempts` (default 6) the entry transitions to `Dead`
+- At `max_attempts` (default 6), failed entries remain `Failed` but are ineligible for automatic reservation
 - Stale sweep does **not** increment the attempt counter
-- `dead()` bypasses retry scheduling and is reserved for non-retriable post-acceptance transformation failures
+- Explicit administrative `dead()` remains available; automatic consumers never invoke it
 
 ## Delivery and Idempotency
 
@@ -348,28 +346,31 @@ Applies to retriable `failed()` transitions caused by transport publication fail
 
 ## HTTP Batch Endpoint
 
-`POST /outbox/run` is provided by [`libs/mulac_outbox_api`](../libs/mulac_outbox_api) and
-exposed through the `outbox` feature of `mulac_poem` and `mulac_axum`
-([ADR-010](adr/010-queue-http-apis.md)). It publishes one batch through
+`POST /run` is provided by this crate's `axum` and `poem` features and mounted under
+an application-owned prefix ([ADR-011](adr/011-core-http-features.md)). It publishes
+one batch through
 `OutboxConsumer::publish_batch` with `ReservableOutboxSpec::new(limit)`:
 
-- `limit` is required, from `1` to `1000`; other values return `400`.
+- `limit` must be from `1` to `1000`; other values return `400` with that message.
+  A body that can't be parsed returns `400` with only a logged error ID.
 - A processed batch returns `200` with `{"processed":N,"errors":[]}`. Any
-  failure sets `processed` to `null` and lists each `OutboxError` text in
+  failure sets `processed` to `null` and lists one logged error ID per failure in
   `errors`; published entries stay completed.
 - Without a configured publisher, valid requests return `503`
   `outbox publisher is not configured` and storage is not touched.
-- A failed blocking task returns `500` `queue processing task failed`.
+- A failed blocking task returns `500` with only a logged error ID.
 
-`OutboxService::from_postgres(pool, publisher)` assembles the consumer from
-`consumer_repository(pool)`. The publisher is any `OutboxPublisherPort`; the
-API crate never enables `amqp`.
+Error IDs are explained in [ADR-015](adr/015-http-errors-by-id.md).
+
+`AsyncOutboxService::from_postgres(pool, publisher)` assembles the consumer from
+`Arc::new(DieselPgOutboxRepository::new(pool))`. The publisher is any `OutboxPublisherPort`; the
+HTTP features never enable `amqp`.
 
 ## Feature Flags
 
-| Feature  | Adds                                                                |
-|----------|---------------------------------------------------------------------|
-| `diesel` | PostgreSQL storage adapters, schema mapping, JSONB metadata support |
+| Feature  | Adds                                                                   |
+| -------- | ---------------------------------------------------------------------- |
+| `diesel` | PostgreSQL storage adapters, schema mapping, JSONB metadata support    |
 | `amqp`   | `AmqpPublisher` and the strict `ConfirmedAmqpPublisher` (lapin, Tokio) |
 
 ## Examples
@@ -400,3 +401,13 @@ let spec = ReservableOutboxSpec { limit: 100, max_attempts: 6 };
 let mut consumer = OutboxConsumer::new(repository, publisher);
 let result = consumer.publish_batch(&spec).await;
 ```
+
+## Reusable HTTP endpoints
+
+Framework preludes expose `outbox_routes(service)` and `OutboxApi::new(service)`.
+Both accept `impl Into<AsyncOutboxService>`, so an `Arc<OutboxConsumer<R>>` can be
+passed directly.
+Relative `POST /run` processes a batch.
+The host owns mount prefixes, authentication, authorization and middleware.
+Existing custom adapters remain available; HTTP status/body contracts and Cargo
+feature names are unchanged. The shared Poem run schemas remain in `mulac_http`.

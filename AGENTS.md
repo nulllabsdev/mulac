@@ -4,7 +4,7 @@ These guidelines apply to all AI code assistants working in this repository.
 
 ## Feature Module Structure
 
-Every feature module must expose a single `pub mod prelude` as its only public interface. All internal implementation sub-modules (`commanding`, `eventing`, `http`, `infra_sqlx_pg`, etc.) must be declared without `pub` so they remain private to the feature.
+Every feature module throughout the Mulac project must expose a single `pub mod prelude` as its only public interface. All internal implementation sub-modules (`commanding`, `eventing`, `http`, `infra_sqlx_pg`, etc.) must be declared without `pub` so they remain private to the feature.
 
 ```rust
 mod commanding { ... }    // private: command structs and handlers
@@ -12,7 +12,7 @@ mod eventing { ... }      // private: event structs and subscribers
 mod infra_sqlx_pg { ... } // private: database queries
 mod http { ... }          // private: HTTP API handlers and request types
 
-pub mod prelude {              // public: re-exports only
+pub mod prelude {         // public: re-exports only
     pub use super::commanding::{MyCommand, MyHandler};
     pub use super::eventing::{MyEvent, MySubscriber};
     pub use super::infra_sqlx_pg::my_query;
@@ -20,7 +20,7 @@ pub mod prelude {              // public: re-exports only
 }
 ```
 
-Callers must import through `feature::prelude::*`, never through internal sub-modules like `feature::commanding::*` or `feature::http::*`.
+Callers must import through `feature::prelude::*`, never through internal sub-modules like `feature::commanding::*` or `feature::http::*`. This convention applies across libraries, kernel, and test applications, including outbox and outbox_api. Standard-library and third-party I/O modules (such as `std::io`) are unaffected.
 
 ## Conventional Commits
 

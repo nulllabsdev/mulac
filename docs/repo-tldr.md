@@ -52,14 +52,14 @@ Top-level areas:
 
 For feature work, first check:
 
-| Task | Start here |
-| --- | --- |
-| Inbox processing | `libs/inbox/src/inbox_consumer.rs` |
-| Command retries / storage | `libs/commanding/src/command_consumer.rs`, `libs/commanding/src/assembly/infra_diesel.rs` |
-| Event retries / storage | `libs/eventing/src/event_consumer.rs`, `libs/eventing/src/assembly/infra_diesel.rs` |
-| Outbox retries / publishing | `libs/outbox/src/outbox_consumer.rs`, `libs/outbox/src/assembly/infra_diesel.rs` |
-| Lifecycle semantics | `docs/components.md` |
-| End-to-end architecture | `docs/architecture-spec.md` |
+| Task                        | Start here                                                                                            |
+| --------------------------- | ----------------------------------------------------------------------------------------------------- |
+| Inbox processing            | `libs/inbox/src/execution/inbox_consumer.rs`                                                          |
+| Command retries / storage   | `libs/commanding/src/execution/command_consumer.rs`, `libs/commanding/src/infra_diesel/repository.rs` |
+| Event retries / storage     | `libs/eventing/src/execution/event_consumer.rs`, `libs/eventing/src/infra_diesel/repository.rs`       |
+| Outbox retries / publishing | `libs/outbox/src/execution/outbox_consumer.rs`, `libs/outbox/src/infra_diesel/repository.rs`          |
+| Lifecycle semantics         | `docs/components.md`                                                                                  |
+| End-to-end architecture     | `docs/architecture-spec.md`                                                                           |
 
 ---
 
@@ -77,15 +77,15 @@ Repository rule from `AGENTS.md`:
 
 Common structure inside crates:
 
-- `assembly/domain.rs` — domain types and state enums
-- `assembly/application.rs` — app-facing envelopes / ports
-- `assembly/infra_diesel.rs` — Diesel rows, conversions, storage adapters
-- `*_consumer.rs` — reservation / processing flow
-- `stale_*_sweep.rs` — timed-out reservation recovery
+- `domain/` — domain types, state enums, timeout policy
+- `application/` — app-facing envelopes, ports, gateways, `stale_*_sweep.rs` recovery
+- `execution/` — `*_consumer.rs` reservation / processing flow, reservation spec, dispatchers
+- `http/` — contracts, async execution bridge, Axum and Poem adapters
+- `infra_diesel/` — Diesel rows, conversions, storage adapters
 
 Preferred dependency direction:
 
-`domain <- application <- feature flow <- infra adapter`
+`domain <- application <- execution <- HTTP and infra adapters`
 
 ---
 
@@ -148,14 +148,14 @@ Important current note:
 
 **Detail**
 
-| Concern | Files |
-| --- | --- |
-| Inbox `ExtraInfo` | `libs/inbox/src/assembly/domain.rs`, `libs/inbox/src/assembly/infra_diesel.rs`, `libs/inbox/src/inbox_consumer.rs`, `libs/inbox/src/stale_reservation_sweep.rs` |
-| Command `ExtraInfo` | `libs/commanding/src/assembly/domain.rs`, `libs/commanding/src/assembly/infra_diesel.rs`, `libs/commanding/src/command_consumer.rs`, `libs/commanding/src/stale_command_sweep.rs` |
-| Event `ExtraInfo` | `libs/eventing/src/assembly/domain.rs`, `libs/eventing/src/assembly/infra_diesel.rs`, `libs/eventing/src/event_consumer.rs`, `libs/eventing/src/stale_event_sweep.rs` |
-| Outbox `ExtraInfo` | `libs/outbox/src/assembly/domain.rs`, `libs/outbox/src/assembly/infra_diesel.rs`, `libs/outbox/src/outbox_consumer.rs`, `libs/outbox/src/stale_reservation_sweep.rs` |
-| App migrations / schema | `test_apps/todo/migrations`, `test_apps/twitter/migrations`, `test_apps/twitter/src/schema.rs` |
-| Strongest storage test | `libs/outbox/tests/diesel_storage.rs` |
+| Concern                 | Files                                                                                                                                                                                                |
+| ----------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Inbox `ExtraInfo`       | `libs/inbox/src/domain/mod.rs`, `libs/inbox/src/infra_diesel/repository.rs`, `libs/inbox/src/application/models.rs`, `libs/inbox/src/application/stale_reservation_sweep.rs`                         |
+| Command `ExtraInfo`     | `libs/commanding/src/domain/mod.rs`, `libs/commanding/src/infra_diesel/repository.rs`, `libs/commanding/src/execution/command_consumer.rs`, `libs/commanding/src/application/stale_command_sweep.rs` |
+| Event `ExtraInfo`       | `libs/eventing/src/domain/mod.rs`, `libs/eventing/src/infra_diesel/repository.rs`, `libs/eventing/src/application/models.rs`, `libs/eventing/src/application/stale_event_sweep.rs`                   |
+| Outbox `ExtraInfo`      | `libs/outbox/src/domain/mod.rs`, `libs/outbox/src/infra_diesel/repository.rs`, `libs/outbox/src/application/models.rs`, `libs/outbox/src/application/stale_reservation_sweep.rs`                     |
+| App migrations / schema | `test_apps/todo/migrations`, `test_apps/twitter/migrations`, `test_apps/twitter/src/schema.rs`                                                                                                       |
+| Strongest storage test  | `libs/outbox/tests/diesel_storage.rs`                                                                                                                                                                |
 
 ---
 
@@ -174,7 +174,7 @@ Preferred workflow:
 
 Good prompt examples:
 
-- “Review only `libs/outbox/src/assembly/infra_diesel.rs` for reservation correctness”
+- “Review only `libs/outbox/src/infra_diesel/repository.rs` for reservation correctness”
 - “Trace `extra_info` through inbox only”
 - “Use the existing TL;DR and inspect only files touched by commit `abc123`”
 

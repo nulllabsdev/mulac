@@ -109,7 +109,7 @@ All state-changing endpoints dispatch commands through Mulac. All operations hav
 Application API endpoints are mounted under the `/api` prefix. Health and Swagger UI remain mounted at `/health` and `/swagger`.
 
 | Method | Path                    | Command           | Event              |
-|--------|-------------------------|-------------------|--------------------|
+| ------ | ----------------------- | ----------------- | ------------------ |
 | POST   | /api/todos              | CreateTodo        | TodoCreated        |
 | GET    | /api/todos              | —                 | —                  |
 | GET    | /api/todos/:id          | —                 | —                  |
@@ -148,7 +148,7 @@ Errors: `{ "error": "..." }` with appropriate HTTP status codes (404, 400, 409, 
 Supported `type` values and their fields:
 
 | type          | required fields               | optional fields |
-|---------------|-------------------------------|-----------------|
+| ------------- | ----------------------------- | --------------- |
 | CreateTodo    | `title`                       | `description`   |
 | UpdateTodo    | `todo_id`, `title`            | `description`   |
 | CompleteTodo  | `todo_id`                     |                 |
@@ -200,7 +200,7 @@ Background workers in `assembly/application.rs` repeat the consume step every 1 
 ## Database tables
 
 | Table             | Purpose                                                                                  |
-|-------------------|------------------------------------------------------------------------------------------|
+| ----------------- | ---------------------------------------------------------------------------------------- |
 | `todos`           | canonical todo rows                                                                      |
 | `outbox_messages` | domain events pending publication (status: pending/published/failed)                     |
 | `inbox_messages`  | inbound commands received via /api/messages/commands (status: received/processed/failed) |
@@ -260,9 +260,8 @@ Environment variables:
 
 - **`kernel`** — `ApplicationCommand`, `ApplicationEvent`, `CommandHandlerPort`,
   `EventSubscriberPort`, `NewCommandEnvelope`, `KernelError`, etc.
-- **`commanding`** — `CommandGateway`, `CommandConsumer`, `CommandRecorder`,
-  storage types, `wrap_handler`
-- **`eventing`** — `EventGateway`, `EventConsumer`, `EventRecorder`, storage types
+- **`commanding`** — `CommandGateway`, `CommandConsumer`, storage types, `wrap_handler`
+- **`eventing`** — `EventGateway`, `EventConsumer`, storage types
 - **`mulac_diesel`** — `build_pool()` for database setup
 
 These live in `../kernel`, `../commanding`, `../eventing`, and `../mulac_diesel` relative to this crate.
