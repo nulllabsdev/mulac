@@ -1,67 +1,31 @@
 pub mod prelude {
     pub use super::recorder::OutboxRecorder;
-    pub use super::repository::OutboxRecorderRepository;
-    #[cfg(feature = "diesel")]
-    use crate::assembly::infra_diesel::prelude::{DbPool, OutboxStoreStorage};
-    #[cfg(feature = "diesel")]
-    use std::sync::Arc;
-    #[cfg(feature = "diesel")]
-    pub fn repository(pool: DbPool) -> Arc<OutboxRecorderRepository> {
-        let store = Arc::new(OutboxStoreStorage::new(pool));
-        Arc::new(OutboxRecorderRepository::new(store))
-    }
-}
-
-mod repository {
-    use crate::assembly::prelude::{NewOutboxEntry, OutboxError, OutboxStorePort};
-    use std::sync::Arc;
-
-    pub struct OutboxRecorderRepository {
-        pub(super) store: Arc<dyn OutboxStorePort>,
-    }
-
-    impl OutboxRecorderRepository {
-        pub fn new(store: Arc<dyn OutboxStorePort>) -> Self {
-            Self { store }
-        }
-
-        pub(super) fn insert(&self, entry: &NewOutboxEntry) -> Result<(), OutboxError> {
-            self.store.record(entry)
-        }
-    }
 }
 
 mod recorder {
-    use super::repository::OutboxRecorderRepository;
-    use crate::assembly::prelude::{NewOutboxEntry, NewOutboxEnvelope, OutboxError};
+    use crate::application::prelude::OutboxStorePort;
+    use crate::application::prelude::{NewOutboxEntry, NewOutboxEnvelope, OutboxError};
     use std::sync::Arc;
 
     pub struct OutboxRecorder {
-        repo: Arc<OutboxRecorderRepository>,
+        repo: Arc<dyn OutboxStorePort>,
     }
 
     impl OutboxRecorder {
-        pub fn new(repo: Arc<OutboxRecorderRepository>) -> Self {
+        pub fn new(repo: Arc<dyn OutboxStorePort>) -> Self {
             Self { repo }
         }
 
         pub fn record(&self, envelope: &NewOutboxEnvelope) -> Result<(), OutboxError> {
             validate_routing_key(envelope)?;
             let entry = NewOutboxEntry::from(envelope);
-            self.repo.insert(&entry)
+            self.repo.record(&entry)
         }
     }
 
     fn validate_routing_key(envelope: &NewOutboxEnvelope) -> Result<(), OutboxError> {
-        if envelope
-            .metadata
-            .sequence
-            .is_some_and(|value| value == 0 || value > i64::MAX as u64)
-        {
-            return Err(OutboxError::Routing(
-                "sequence must be between 1 and i64::MAX".into(),
-            ));
-        }
+        crate::application::prelude::validate_sequence(envelope.metadata.sequence)
+            .map_err(|message| OutboxError::Routing(message.into()))?;
         if envelope.metadata.routing_key.trim().is_empty() {
             return Err(OutboxError::Routing("routing_key is required".into()));
         }
@@ -70,7 +34,7 @@ mod recorder {
 }
 
 mod conversions {
-    use crate::assembly::prelude::{
+    use crate::application::prelude::{
         NewOutboxEntry,
         NewOutboxEnvelope,
         OutboxEntryMetadata,
@@ -95,8 +59,8 @@ mod conversions {
 
 #[cfg(test)]
 mod tests {
-    use super::prelude::{OutboxRecorder, OutboxRecorderRepository};
-    use crate::assembly::prelude::{
+    use super::prelude::OutboxRecorder;
+    use crate::application::prelude::{
         NewOutboxEntry,
         NewOutboxEnvelope,
         NewOutboxMetadata,
@@ -146,7 +110,7 @@ mod tests {
     #[test]
     fn record_stores_valid_envelope() {
         let store = Arc::new(FakeStore::default());
-        let repo = Arc::new(OutboxRecorderRepository::new(store.clone()));
+        let repo = store.clone();
         let recorder = OutboxRecorder::new(repo);
         let event_id = Uuid::now_v7();
 
@@ -162,7 +126,7 @@ mod tests {
     #[test]
     fn record_rejects_blank_routing_key_before_storage() {
         let store = Arc::new(FakeStore::default());
-        let repo = Arc::new(OutboxRecorderRepository::new(store.clone()));
+        let repo = store.clone();
         let recorder = OutboxRecorder::new(repo);
         let mut envelope = envelope(Uuid::now_v7());
         envelope.metadata.routing_key = "  ".into();
@@ -180,7 +144,7 @@ mod tests {
     #[test]
     fn record_preserves_event_id_in_stored_entry() {
         let store = Arc::new(FakeStore::default());
-        let repo = Arc::new(OutboxRecorderRepository::new(store.clone()));
+        let repo = store.clone();
         let recorder = OutboxRecorder::new(repo);
         let event_id = Uuid::now_v7();
         let mut envelope = envelope(event_id);

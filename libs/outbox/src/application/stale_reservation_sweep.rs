@@ -1,21 +1,13 @@
 pub mod prelude {
     pub use super::spec::StaleReservationSpec;
     pub use super::sweeper::ReservationSweeper;
-    #[cfg(feature = "diesel")]
-    use crate::assembly::infra_diesel::prelude::{DbPool, OutboxConsumerStorage};
-    #[cfg(feature = "diesel")]
-    use std::sync::Arc;
-    #[cfg(feature = "diesel")]
-    pub fn sweeper(pool: DbPool) -> ReservationSweeper {
-        let storage = Arc::new(OutboxConsumerStorage::new(pool));
-        ReservationSweeper::new(storage)
-    }
 }
 
 mod spec {
     #[derive(Clone, Debug, Eq, PartialEq)]
     pub struct StaleReservationSpec {
         pub timeout: chrono::Duration,
+        /// Use the same retry limit as the consumer.
         pub max_attempts: i32,
     }
 
@@ -38,7 +30,7 @@ mod spec {
 
 mod sweeper {
     use super::spec::StaleReservationSpec;
-    use crate::assembly::prelude::{OutboxError, OutboxSweepPort};
+    use crate::application::prelude::{OutboxError, OutboxSweepPort};
     use std::sync::Arc;
 
     pub struct ReservationSweeper {
@@ -59,7 +51,7 @@ mod sweeper {
 #[cfg(test)]
 mod tests {
     use super::prelude::{ReservationSweeper, StaleReservationSpec};
-    use crate::assembly::prelude::{OutboxError, OutboxSweepPort};
+    use crate::application::prelude::{OutboxError, OutboxSweepPort};
     use chrono::Duration;
     use std::sync::{Arc, Mutex};
 

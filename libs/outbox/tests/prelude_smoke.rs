@@ -86,11 +86,14 @@ fn io_facade_reexports_core_outbox_api() {
         metadata,
     };
 
-    let recorder_repo = Arc::new(OutboxRecorderRepository::new(Arc::new(NoopStore)));
+    let recorder_repo = Arc::new(NoopStore);
     let recorder = OutboxRecorder::new(recorder_repo);
     recorder.record(&envelope).expect("record succeeds");
 
-    let consumer_repo = OutboxConsumerRepository::new(Arc::new(NoopReserve), Arc::new(NoopProcess));
+    let consumer_repo = Arc::new(TestRepository {
+        reserve: Arc::new(NoopReserve),
+        process: Arc::new(NoopProcess),
+    });
     let consumer = OutboxConsumer::new(consumer_repo, Arc::new(NoopPublisher));
     consumer
         .publish_batch(&ReservableOutboxSpec::new(10))
@@ -112,13 +115,8 @@ fn io_facade_reexports_core_outbox_api() {
 #[test]
 fn io_facade_reexports_diesel_scaffold() {
     let _pool_type: Option<DbPool> = None;
-    let _store_ctor: fn(DbPool) -> OutboxStoreStorage = OutboxStoreStorage::new;
-    let _consumer_ctor: fn(DbPool) -> OutboxConsumerStorage = OutboxConsumerStorage::new;
+    let _constructor: fn(DbPool) -> DieselPgOutboxRepository = DieselPgOutboxRepository::new;
     let _builder: fn(&str) -> Result<DbPool, diesel::r2d2::PoolError> = build_pool;
-    let _recorder_repo_ctor: fn(DbPool) -> std::sync::Arc<OutboxRecorderRepository> =
-        recorder_repository;
-    let _consumer_repo_ctor: fn(DbPool) -> OutboxConsumerRepository = consumer_repository;
-    let _sweeper_ctor: fn(DbPool) -> ReservationSweeper = reservation_sweeper;
 }
 
 #[cfg(feature = "amqp")]
@@ -129,4 +127,25 @@ fn io_facade_reexports_amqp_scaffold() {
 
     assert_eq!(config.exchange, "");
     assert_eq!(config.default_content_type, "application/json");
+}
+
+struct TestRepository {
+    reserve: Arc<dyn OutboxReservePort>,
+    process: Arc<dyn OutboxProcessPort>,
+}
+impl OutboxReservePort for TestRepository {
+    fn reserve(&self, s: &ReservableOutboxSpec) -> Result<Vec<OutboxEntryEnvelope>, OutboxError> {
+        self.reserve.reserve(s)
+    }
+}
+impl OutboxProcessPort for TestRepository {
+    fn completed(&self, id: Uuid, r: Uuid) -> Result<(), OutboxError> {
+        self.process.completed(id, r)
+    }
+    fn failed(&self, id: Uuid, r: Uuid, m: i32, e: Option<String>) -> Result<(), OutboxError> {
+        self.process.failed(id, r, m, e)
+    }
+    fn dead(&self, id: Uuid, r: Uuid, e: Option<String>) -> Result<(), OutboxError> {
+        self.process.dead(id, r, e)
+    }
 }

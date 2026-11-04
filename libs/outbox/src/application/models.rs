@@ -1,4 +1,4 @@
-//! Outbox application-layer envelopes, ports, and errors.
+//! Outbox application-layer envelopes and errors.
 //!
 //! Application types are added incrementally according to the implementation checklist.
 
@@ -11,14 +11,8 @@ pub mod prelude {
         OutboxError,
         //
     };
-    pub use super::ports::{
-        OutboxProcessPort,
-        OutboxPublisherPort,
-        OutboxReservePort,
-        OutboxStorePort,
-        OutboxSweepPort,
-        //
-    };
+    pub(crate) use super::validate_sequence;
+    pub use super::{NewOutboxEntry, OutboxEntry, OutboxEntryMetadata};
 }
 
 mod models {
@@ -51,13 +45,13 @@ mod models {
     #[derive(Debug, Clone, PartialEq, Eq)]
     pub struct OutboundMessageEnvelope {
         pub payload: Vec<u8>,
-        pub metadata: crate::assembly::domain::OutboxEntryMetadata,
+        pub metadata: crate::application::prelude::OutboxEntryMetadata,
     }
 
     #[derive(Debug, Clone, PartialEq)]
     pub struct OutboxEntryEnvelope {
-        pub message: crate::assembly::domain::OutboxEntry,
-        pub metadata: crate::assembly::domain::OutboxEntryMetadata,
+        pub message: crate::application::prelude::OutboxEntry,
+        pub metadata: crate::application::prelude::OutboxEntryMetadata,
     }
 
     #[derive(Debug, Clone, PartialEq, Eq)]
@@ -76,7 +70,7 @@ mod models {
 
 mod conversions {
     use super::models::NewOutboxMetadata;
-    use crate::assembly::domain::OutboxEntryMetadata;
+    use crate::application::prelude::OutboxEntryMetadata;
 
     impl From<NewOutboxMetadata> for OutboxEntryMetadata {
         fn from(metadata: NewOutboxMetadata) -> Self {
@@ -96,59 +90,10 @@ mod conversions {
     }
 }
 
-mod ports {
-    use super::models::OutboxError;
-    use crate::assembly::domain::NewOutboxEntry;
-
-    pub trait OutboxStorePort: Send + Sync {
-        fn record(&self, entry: &NewOutboxEntry) -> Result<(), OutboxError>;
-    }
-
-    pub trait OutboxReservePort: Send + Sync {
-        fn reserve(
-            &self,
-            spec: &crate::outbox_consumer::prelude::ReservableOutboxSpec,
-        ) -> Result<Vec<super::models::OutboxEntryEnvelope>, OutboxError>;
-    }
-
-    pub trait OutboxPublisherPort: Send + Sync {
-        fn publish(
-            &self,
-            envelope: super::models::OutboundMessageEnvelope,
-        ) -> Result<(), OutboxError>;
-    }
-
-    pub trait OutboxSweepPort: Send + Sync {
-        fn sweep(
-            &self,
-            spec: &crate::stale_reservation_sweep::prelude::StaleReservationSpec,
-        ) -> Result<u64, OutboxError>;
-    }
-
-    pub trait OutboxProcessPort: Send + Sync {
-        fn completed(&self, id: uuid::Uuid, reservation_id: uuid::Uuid) -> Result<(), OutboxError>;
-
-        fn failed(
-            &self,
-            id: uuid::Uuid,
-            reservation_id: uuid::Uuid,
-            max_attempts: i32,
-            reason: Option<String>,
-        ) -> Result<(), OutboxError>;
-
-        fn dead(
-            &self,
-            id: uuid::Uuid,
-            reservation_id: uuid::Uuid,
-            reason: Option<String>,
-        ) -> Result<(), OutboxError>;
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::models::NewOutboxMetadata;
-    use crate::assembly::domain::OutboxEntryMetadata;
+    use crate::application::prelude::OutboxEntryMetadata;
     use uuid::Uuid;
 
     fn metadata(event_id: Uuid, message_id: Option<Uuid>) -> NewOutboxMetadata {
@@ -184,4 +129,62 @@ mod tests {
         assert_eq!(converted.event_id, event_id);
         assert_eq!(converted.message_id, message_id);
     }
+}
+
+use crate::application::prelude::{ExtraInfo, OutboxStatus};
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct OutboxEntryMetadata {
+    #[serde(
+        default,
+        skip_serializing_if = "Option::is_none",
+        deserialize_with = "sequence"
+    )]
+    pub sequence: Option<u64>,
+    pub event_id: uuid::Uuid,
+    pub message_id: uuid::Uuid,
+    pub correlation_id: Option<uuid::Uuid>,
+    pub causation_id: Option<uuid::Uuid>,
+    pub event_type: String,
+    pub routing_key: String,
+    pub source: Option<String>,
+    pub content_type: Option<String>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct OutboxEntry {
+    pub id: uuid::Uuid,
+    pub status: OutboxStatus,
+    pub payload: String,
+    pub meta: OutboxEntryMetadata,
+    pub scheduled_at: chrono::DateTime<chrono::Utc>,
+    pub attempts: i32,
+    pub reservation_id: Option<uuid::Uuid>,
+    pub reserved_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub received_at: chrono::DateTime<chrono::Utc>,
+    pub updated_at: chrono::DateTime<chrono::Utc>,
+    pub processed_at: Option<chrono::DateTime<chrono::Utc>>,
+    pub last_error: Option<String>,
+    pub extra_info: Option<ExtraInfo>,
+}
+
+#[derive(Debug, Clone, PartialEq)]
+pub struct NewOutboxEntry {
+    pub id: uuid::Uuid,
+    pub payload: String,
+    pub meta: OutboxEntryMetadata,
+    pub scheduled_at: chrono::DateTime<chrono::Utc>,
+    pub received_at: chrono::DateTime<chrono::Utc>,
+}
+
+fn sequence<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
+    let value = <Option<u64> as serde::Deserialize>::deserialize(deserializer)?;
+    validate_sequence(value).map_err(serde::de::Error::custom)?;
+    Ok(value)
+}
+
+pub(crate) fn validate_sequence(value: Option<u64>) -> Result<(), &'static str> {
+    if value.is_some_and(|sequence| sequence == 0 || sequence > i64::MAX as u64) {
+        return Err("sequence must be between 1 and i64::MAX");
+    }
+    Ok(())
 }

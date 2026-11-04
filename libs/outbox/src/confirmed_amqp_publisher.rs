@@ -8,7 +8,7 @@ pub mod prelude {
 
 use std::time::Duration;
 
-use crate::assembly::prelude::{OutboundMessageEnvelope, OutboxError, OutboxPublisherPort};
+use crate::application::prelude::{OutboundMessageEnvelope, OutboxError, OutboxPublisherPort};
 use lapin::options::{BasicPublishOptions, ConfirmSelectOptions};
 use lapin::types::{AMQPValue, FieldTable, LongString};
 use lapin::{BasicProperties, Channel, Confirmation, Connection, ConnectionProperties};
@@ -195,7 +195,7 @@ fn err_unconfirmed() -> OutboxError {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::assembly::prelude::OutboxEntryMetadata;
+    use crate::application::prelude::OutboxEntryMetadata;
     use lapin::message::{BasicReturnMessage, Delivery};
     use std::sync::Arc;
     use std::sync::atomic::{AtomicUsize, Ordering};

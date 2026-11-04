@@ -139,7 +139,7 @@ fn fetch_entry(pool: &DbPool, id: Uuid) -> EntryRow {
 fn idempotent_recording_keeps_one_row() {
     let pool = test_pool();
     reset_schema(&pool);
-    let store = OutboxStoreStorage::new(pool.clone());
+    let store = DieselPgOutboxRepository::new(pool.clone());
     let event_id = Uuid::now_v7();
     let entry = new_entry(event_id);
 
@@ -154,8 +154,8 @@ fn idempotent_recording_keeps_one_row() {
 fn concurrent_reservations_do_not_claim_the_same_row() {
     let pool = test_pool();
     reset_schema(&pool);
-    let store = OutboxStoreStorage::new(pool.clone());
-    let storage = Arc::new(OutboxConsumerStorage::new(pool.clone()));
+    let store = DieselPgOutboxRepository::new(pool.clone());
+    let storage = Arc::new(DieselPgOutboxRepository::new(pool.clone()));
 
     let first_id = Uuid::now_v7();
     let second_id = Uuid::now_v7();
@@ -203,8 +203,8 @@ fn concurrent_reservations_do_not_claim_the_same_row() {
 fn lifecycle_transitions_update_status_and_metadata() {
     let pool = test_pool();
     reset_schema(&pool);
-    let store = OutboxStoreStorage::new(pool.clone());
-    let storage = OutboxConsumerStorage::new(pool.clone());
+    let store = DieselPgOutboxRepository::new(pool.clone());
+    let storage = DieselPgOutboxRepository::new(pool.clone());
 
     let completed_id = Uuid::now_v7();
     store
@@ -306,7 +306,7 @@ fn stale_sweep_releases_old_reservations_without_incrementing_attempts() {
     .execute(&mut conn)
     .expect("seed reserved row");
 
-    let storage = OutboxConsumerStorage::new(pool.clone());
+    let storage = DieselPgOutboxRepository::new(pool.clone());
     let swept = storage
         .sweep(&StaleReservationSpec::new(Duration::minutes(5)))
         .expect("sweep succeeds");
@@ -324,6 +324,14 @@ fn stale_sweep_releases_old_reservations_without_incrementing_attempts() {
         Some(ExtraInfo::with_error("publication reservation timed out"))
     );
 
+    // Sweeping intentionally schedules a future retry. Make it due explicitly
+    // before testing the read-side preservation of timeout diagnostics.
+    diesel::sql_query(
+        "UPDATE outbox_entries SET scheduled_at = now() - interval '1 second' WHERE id = $1",
+    )
+    .bind::<SqlUuid, _>(event_id)
+    .execute(&mut conn)
+    .unwrap();
     let swept = storage
         .reserve(&ReservableOutboxSpec::new(1))
         .expect("re-reserve swept row")

@@ -1,6 +1,15 @@
-//! Outbox domain models.
-//!
-//! Domain structs are added incrementally according to the implementation checklist.
+#[cfg(any(feature = "diesel", test))]
+mod reservation_timeout_policy;
+pub mod prelude {
+    #[cfg(feature = "diesel")]
+    pub(crate) use super::append_error;
+    #[cfg(feature = "diesel")]
+    pub(crate) use super::reservation_timeout_policy::ReservationTimeoutPolicy;
+    pub use super::{ExtraInfo, OutboxStatus, UnknownOutboxStatus};
+}
+// Outbox domain models.
+//
+// Domain structs are added incrementally according to the implementation checklist.
 
 use thiserror::Error;
 
@@ -27,7 +36,8 @@ impl ExtraInfo {
     }
 }
 
-pub fn append_error(extra_info: Option<ExtraInfo>, error: impl Into<String>) -> ExtraInfo {
+#[cfg(any(feature = "diesel", test))]
+pub(crate) fn append_error(extra_info: Option<ExtraInfo>, error: impl Into<String>) -> ExtraInfo {
     let mut extra_info = extra_info.unwrap_or_default();
     extra_info.add_error(error);
     extra_info
@@ -45,11 +55,11 @@ pub enum OutboxStatus {
     Received = 0,
     /// Claimed by a consumer; blocked from re-reservation until released.
     Reserved = 2,
-    /// Publication attempt failed; scheduled for retry.
+    /// Attempt failed; eligible for retry only while below the attempt cap.
     Failed = 4,
     /// Broker accepted the outbound message.
     Completed = 5,
-    /// Retry limit exhausted or non-retriable failure occurred.
+    /// Explicit/manual terminal status; automatic failures remain `Failed`.
     Dead = 7,
     /// Archived.
     Archive = 8,
@@ -92,50 +102,6 @@ impl OutboxStatus {
             Self::Archive => "archive",
         }
     }
-}
-
-#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
-pub struct OutboxEntryMetadata {
-    #[serde(
-        default,
-        skip_serializing_if = "Option::is_none",
-        deserialize_with = "sequence"
-    )]
-    pub sequence: Option<u64>,
-    pub event_id: uuid::Uuid,
-    pub message_id: uuid::Uuid,
-    pub correlation_id: Option<uuid::Uuid>,
-    pub causation_id: Option<uuid::Uuid>,
-    pub event_type: String,
-    pub routing_key: String,
-    pub source: Option<String>,
-    pub content_type: Option<String>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct OutboxEntry {
-    pub id: uuid::Uuid,
-    pub status: OutboxStatus,
-    pub payload: String,
-    pub meta: OutboxEntryMetadata,
-    pub scheduled_at: chrono::DateTime<chrono::Utc>,
-    pub attempts: i32,
-    pub reservation_id: Option<uuid::Uuid>,
-    pub reserved_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub received_at: chrono::DateTime<chrono::Utc>,
-    pub updated_at: chrono::DateTime<chrono::Utc>,
-    pub processed_at: Option<chrono::DateTime<chrono::Utc>>,
-    pub last_error: Option<String>,
-    pub extra_info: Option<ExtraInfo>,
-}
-
-#[derive(Debug, Clone, PartialEq)]
-pub struct NewOutboxEntry {
-    pub id: uuid::Uuid,
-    pub payload: String,
-    pub meta: OutboxEntryMetadata,
-    pub scheduled_at: chrono::DateTime<chrono::Utc>,
-    pub received_at: chrono::DateTime<chrono::Utc>,
 }
 
 #[cfg(test)]
@@ -205,14 +171,4 @@ mod tests {
         assert_eq!(OutboxStatus::Dead.as_str(), "dead");
         assert_eq!(OutboxStatus::Archive.as_str(), "archive");
     }
-}
-
-fn sequence<'de, D: serde::Deserializer<'de>>(deserializer: D) -> Result<Option<u64>, D::Error> {
-    let value = <Option<u64> as serde::Deserialize>::deserialize(deserializer)?;
-    if value.is_some_and(|sequence| sequence == 0 || sequence > i64::MAX as u64) {
-        return Err(serde::de::Error::custom(
-            "sequence must be between 1 and i64::MAX",
-        ));
-    }
-    Ok(value)
 }

@@ -33,7 +33,6 @@ use chrono::Utc;
 use outbox::prelude::{
     OutboundMessageEnvelope,
     OutboxConsumer,
-    OutboxConsumerRepository,
     OutboxEntry,
     OutboxEntryEnvelope,
     OutboxEntryMetadata,
@@ -230,7 +229,7 @@ fn service(
         outcomes: outcomes.clone(),
         fail_marking,
     });
-    let repository = OutboxConsumerRepository::new(reserve, process);
+    let repository = Arc::new(Repository { reserve, process });
     let consumer = Arc::new(OutboxConsumer::new(repository, publisher));
     (OutboxService::new(consumer), outcomes)
 }
@@ -311,7 +310,7 @@ pub fn partially_failing_service() -> (OutboxService, Outcomes) {
     (service, outcomes)
 }
 
-/// Holds one entry without a routing key, which is marked dead and reported
+/// Holds one entry without a routing key, which is marked failed and reported
 /// as [`CONVERSION_FAILURE`] without publishing.
 pub fn unroutable_service() -> (OutboxService, Outcomes) {
     let (service, outcomes, _) = recording(queue(&["   "]), false);
@@ -328,4 +327,39 @@ pub fn missing_reservation_service() -> OutboxService {
 /// Panics during reservation.
 pub fn panicking_service() -> OutboxService {
     recording(Arc::new(PanickingReservation), false).0
+}
+
+struct Repository {
+    reserve: Arc<dyn OutboxReservePort>,
+    process: Arc<dyn OutboxProcessPort>,
+}
+impl OutboxReservePort for Repository {
+    fn reserve(
+        &self,
+        spec: &ReservableOutboxSpec,
+    ) -> Result<Vec<OutboxEntryEnvelope>, OutboxError> {
+        self.reserve.reserve(spec)
+    }
+}
+impl OutboxProcessPort for Repository {
+    fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), OutboxError> {
+        self.process.completed(id, reservation_id)
+    }
+    fn failed(
+        &self,
+        id: Uuid,
+        reservation_id: Uuid,
+        max: i32,
+        reason: Option<String>,
+    ) -> Result<(), OutboxError> {
+        self.process.failed(id, reservation_id, max, reason)
+    }
+    fn dead(
+        &self,
+        id: Uuid,
+        reservation_id: Uuid,
+        reason: Option<String>,
+    ) -> Result<(), OutboxError> {
+        self.process.dead(id, reservation_id, reason)
+    }
 }

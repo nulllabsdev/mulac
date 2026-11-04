@@ -117,9 +117,12 @@ fn fetch_entry(pool: &DbPool, id: Uuid) -> EntryRow {
 fn record_reserve_publish_complete_updates_row() {
     let pool = test_pool();
     reset_schema(&pool);
-    let recorder = OutboxRecorder::new(recorder_repository(pool.clone()));
+    let recorder = OutboxRecorder::new(Arc::new(DieselPgOutboxRepository::new(pool.clone())));
     let publisher = Arc::new(FakePublisher::success());
-    let consumer = OutboxConsumer::new(consumer_repository(pool.clone()), publisher.clone());
+    let consumer = OutboxConsumer::new(
+        Arc::new(DieselPgOutboxRepository::new(pool.clone())),
+        publisher.clone(),
+    );
     let event_id = Uuid::now_v7();
 
     recorder
@@ -145,9 +148,12 @@ fn record_reserve_publish_complete_updates_row() {
 fn transport_failure_moves_entry_to_failed() {
     let pool = test_pool();
     reset_schema(&pool);
-    let recorder = OutboxRecorder::new(recorder_repository(pool.clone()));
+    let recorder = OutboxRecorder::new(Arc::new(DieselPgOutboxRepository::new(pool.clone())));
     let publisher = Arc::new(FakePublisher::failing("broker unavailable"));
-    let consumer = OutboxConsumer::new(consumer_repository(pool.clone()), publisher.clone());
+    let consumer = OutboxConsumer::new(
+        Arc::new(DieselPgOutboxRepository::new(pool.clone())),
+        publisher.clone(),
+    );
     let event_id = Uuid::now_v7();
 
     recorder
@@ -169,10 +175,13 @@ fn transport_failure_moves_entry_to_failed() {
 fn failed_entries_become_reservable_after_scheduled_at() {
     let pool = test_pool();
     reset_schema(&pool);
-    let recorder = OutboxRecorder::new(recorder_repository(pool.clone()));
+    let recorder = OutboxRecorder::new(Arc::new(DieselPgOutboxRepository::new(pool.clone())));
     let publisher = Arc::new(FakePublisher::failing("broker unavailable"));
-    let consumer = OutboxConsumer::new(consumer_repository(pool.clone()), publisher);
-    let storage = OutboxConsumerStorage::new(pool.clone());
+    let consumer = OutboxConsumer::new(
+        Arc::new(DieselPgOutboxRepository::new(pool.clone())),
+        publisher,
+    );
+    let storage = DieselPgOutboxRepository::new(pool.clone());
     let event_id = Uuid::now_v7();
 
     recorder
@@ -200,12 +209,15 @@ fn failed_entries_become_reservable_after_scheduled_at() {
 
 #[ignore = "requires OUTBOX_TEST_DATABASE_URL"]
 #[test]
-fn conversion_failure_moves_entry_to_dead() {
+fn conversion_failure_moves_entry_to_failed() {
     let pool = test_pool();
     reset_schema(&pool);
-    let recorder = OutboxRecorder::new(recorder_repository(pool.clone()));
+    let recorder = OutboxRecorder::new(Arc::new(DieselPgOutboxRepository::new(pool.clone())));
     let publisher = Arc::new(FakePublisher::success());
-    let consumer = OutboxConsumer::new(consumer_repository(pool.clone()), publisher);
+    let consumer = OutboxConsumer::new(
+        Arc::new(DieselPgOutboxRepository::new(pool.clone())),
+        publisher,
+    );
     let event_id = Uuid::now_v7();
 
     recorder
@@ -231,7 +243,7 @@ fn conversion_failure_moves_entry_to_dead() {
     );
 
     let row = fetch_entry(&pool, event_id);
-    assert_eq!(row.status, i32::from(OutboxStatus::Dead));
+    assert_eq!(row.status, i32::from(OutboxStatus::Failed));
     assert!(row.reservation_id.is_none());
 }
 
@@ -318,12 +330,12 @@ fn duplicate_publish_after_completion_failure_keeps_message_id_stable() {
         metadata,
     };
     let publisher = Arc::new(FakePublisher::success());
-    let repository = OutboxConsumerRepository::new(
-        Arc::new(RepeatReserve { entry }),
-        Arc::new(FlakyProcess {
+    let repository = Arc::new(TestRepository {
+        reserve: Arc::new(RepeatReserve { entry }),
+        process: Arc::new(FlakyProcess {
             completed_calls: Mutex::new(0),
         }),
-    );
+    });
     let consumer = OutboxConsumer::new(repository, publisher.clone());
 
     assert!(
@@ -339,4 +351,25 @@ fn duplicate_publish_after_completion_failure_keeps_message_id_stable() {
         publisher.published_message_ids.lock().unwrap().as_slice(),
         &[event_id, event_id]
     );
+}
+
+struct TestRepository {
+    reserve: Arc<dyn OutboxReservePort>,
+    process: Arc<dyn OutboxProcessPort>,
+}
+impl OutboxReservePort for TestRepository {
+    fn reserve(&self, s: &ReservableOutboxSpec) -> Result<Vec<OutboxEntryEnvelope>, OutboxError> {
+        self.reserve.reserve(s)
+    }
+}
+impl OutboxProcessPort for TestRepository {
+    fn completed(&self, id: Uuid, r: Uuid) -> Result<(), OutboxError> {
+        self.process.completed(id, r)
+    }
+    fn failed(&self, id: Uuid, r: Uuid, m: i32, e: Option<String>) -> Result<(), OutboxError> {
+        self.process.failed(id, r, m, e)
+    }
+    fn dead(&self, id: Uuid, r: Uuid, e: Option<String>) -> Result<(), OutboxError> {
+        self.process.dead(id, r, e)
+    }
 }

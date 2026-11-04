@@ -2,7 +2,7 @@ pub mod prelude {
     pub use super::{AmqpPublishConfig, AmqpPublisher};
 }
 
-use crate::assembly::prelude::{
+use crate::application::prelude::{
     OutboundMessageEnvelope,
     OutboxEntryMetadata,
     OutboxError,

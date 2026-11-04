@@ -10,6 +10,8 @@ use crate::contract::prelude::{
 use crate::error::prelude::OutboxApiError;
 use outbox::prelude::{
     OutboxConsumer,
+    OutboxProcessPort,
+    OutboxReservePort,
     ReservableOutboxSpec,
     //
 };
@@ -21,13 +23,21 @@ use std::sync::Arc;
 /// code: publishers such as an AMQP bridge may block on the application
 /// runtime. Use `AsyncOutboxService` (feature `tokio`) from async handlers.
 pub struct OutboxService {
-    consumer: Arc<OutboxConsumer>,
+    run: Arc<dyn Fn(RunOutboxRequest) -> RunOutboxResponse + Send + Sync>,
 }
 
 impl OutboxService {
     /// Wrap a consumer whose storage and publisher the application assembled.
-    pub fn new(consumer: Arc<OutboxConsumer>) -> Self {
-        Self { consumer }
+    pub fn new<R: OutboxReservePort + OutboxProcessPort + 'static>(
+        consumer: Arc<OutboxConsumer<R>>,
+    ) -> Self {
+        Self {
+            run: Arc::new(move |request| {
+                RunOutboxResponse::from_result(
+                    consumer.publish_batch(&ReservableOutboxSpec::new(request.limit)),
+                )
+            }),
+        }
     }
 
     /// Publish from PostgreSQL through an application-owned publisher.
@@ -36,7 +46,7 @@ impl OutboxService {
         pool: outbox::prelude::DbPool,
         publisher: Arc<dyn outbox::prelude::OutboxPublisherPort>,
     ) -> Self {
-        let repository = outbox::prelude::consumer_repository(pool);
+        let repository = Arc::new(outbox::prelude::DieselPgOutboxRepository::new(pool));
         Self::new(Arc::new(OutboxConsumer::new(repository, publisher)))
     }
 
@@ -46,10 +56,7 @@ impl OutboxService {
     /// entries that were published stay completed.
     pub fn run(&self, request: RunOutboxRequest) -> Result<RunOutboxResponse, OutboxApiError> {
         request.validate()?;
-        let result = self
-            .consumer
-            .publish_batch(&ReservableOutboxSpec::new(request.limit));
-        Ok(RunOutboxResponse::from_result(result))
+        Ok((self.run)(request))
     }
 }
 
@@ -123,12 +130,12 @@ mod tests {
     }
 
     #[test]
-    fn unroutable_entries_become_dead() {
+    fn unroutable_entries_become_failed() {
         let (service, outcomes) = testing::unroutable_service();
         let response = run(service, 5);
         assert_eq!(response.processed, None);
         assert_eq!(response.errors, vec![testing::CONVERSION_FAILURE]);
-        assert_eq!(*outcomes.lock().unwrap(), vec!["dead"]);
+        assert_eq!(*outcomes.lock().unwrap(), vec!["failed"]);
     }
 
     #[test]
