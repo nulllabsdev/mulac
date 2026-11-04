@@ -1,0 +1,22 @@
+[package]
+name = "http_adapter_tests"
+version = "0.0.0"
+edition = "2024"
+publish = false
+[workspace]
+[dev-dependencies]
+commanding = { path = "../../libs/commanding", package = "mulac-commanding", default-features = false, features = ["axum-openapi", "poem", "api-testing"] }
+eventing = { path = "../../libs/eventing", package = "mulac-eventing", default-features = false, features = ["axum-openapi", "poem", "api-testing"] }
+inbox = { path = "../../libs/inbox", package = "mulac-inbox", default-features = false, features = ["axum-openapi", "poem", "api-testing"] }
+outbox = { path = "../../libs/outbox", package = "mulac-outbox", default-features = false, features = ["axum-openapi", "poem", "api-testing"] }
+mulac_http = { path = "../../libs/mulac_http", features = ["axum-openapi", "poem"] }
+axum = { version = "0.8", features = ["json", "tokio"] }
+poem = { version = "3", features = ["test"] }
+poem-openapi = "5"
+utoipa = "6"
+serde_json = "1"
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+tower = { version = "0.5", features = ["util"] }
+http-body-util = "0.1"
+tracing-subscriber = "0.3"
+uuid = "1"
