@@ -165,8 +165,8 @@ Reference: [dispatch implementation](../kernel/src/lib.rs#L488).
 ### Production safeguards need clearer defaults
 
 - **Legacy publisher:** `AmqpPublisher` can treat returned/unroutable publication as success. This behavior is documented, but remains hazardous. Prefer `ConfirmedAmqpPublisher` and deprecate or prominently label the legacy implementation. [Source](../libs/outbox/src/amqp_publisher.rs#L73)
-- **Admission control:** async services submit blocking work without bounding concurrent batches. Application-level concurrency limits are important. [Source](../libs/mulac_inbox_api/src/runtime.rs#L36)
-- **Public API consistency:** kernel exposes competing root and `prelude` APIs, including two different `NewCommandEnvelope` types. Consolidate the facade before stabilizing it.
+- **Admission control:** async services submit blocking work without bounding concurrent batches. Application-level concurrency limits are important. [Source](../libs/inbox_api/src/runtime.rs#L36)
+- **Public API consistency:** kernel exposes competing root and `io` APIs, including two different `NewCommandEnvelope` types. Consolidate the facade before stabilizing it.
 - **Documentation:** `contracts.md` describes retry counting, exponential backoff, and deduplication guarantees that differ from current implementation. Reliability contracts need one authoritative definition. [Source](contracts.md#L7)
 
 ## What is working well
