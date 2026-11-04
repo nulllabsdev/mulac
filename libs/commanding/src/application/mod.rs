@@ -1,4 +1,12 @@
+mod command_gateway;
+mod conversions;
+mod criteria;
+mod ports;
+mod stale_command_sweep;
+
 pub mod prelude {
+    pub use super::command_gateway::prelude::CommandGateway;
+    pub use super::criteria::Criterion;
     pub use super::models::{
         Command,
         CommandEnvelope,
@@ -9,11 +17,12 @@ pub mod prelude {
         NewCommandMetadata,
         //
     };
-    pub use super::ports::{CommandProcessPort, CommandStorePort};
+    pub use super::ports::prelude::*;
+    pub use super::stale_command_sweep::prelude::{CommandSweeper, StaleCommandSpec};
 }
 
 mod models {
-    use crate::assembly::domain::ExtraInfo;
+    use crate::domain::prelude::ExtraInfo;
     use uuid::Uuid;
 
     #[derive(Debug, Clone)]
@@ -83,25 +92,51 @@ mod models {
         #[error("eventing error: {0}")]
         Eventing(#[from] eventing::prelude::EventError),
     }
-}
 
-mod ports {
-    use super::models::{CommandError, NewCommandEnvelope};
-    use uuid::Uuid;
+    impl CommandError {
+        pub fn conversion(error: impl std::fmt::Display) -> Self {
+            Self::Conversion(error.to_string())
+        }
 
-    pub trait CommandStorePort: Send + Sync {
-        fn record(&self, envelope: &NewCommandEnvelope) -> Result<(), CommandError>;
+        pub fn missing_command_metadata() -> Self {
+            Self::Conversion("command_id is required: metadata is missing".to_string())
+        }
+
+        pub fn invalid_event_sequence() -> Self {
+            Self::Conversion("sequence must be between 1 and i64::MAX".to_string())
+        }
     }
 
-    pub trait CommandProcessPort: Send + Sync {
-        fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), CommandError>;
+    #[cfg(test)]
+    mod tests {
+        use super::CommandError;
 
-        fn failed(
-            &self,
-            id: Uuid,
-            reservation_id: Uuid,
-            max_attempts: i32,
-            reason: Option<String>,
-        ) -> Result<(), CommandError>;
+        #[test]
+        fn missing_command_metadata_returns_conversion_error() {
+            assert!(matches!(
+                CommandError::missing_command_metadata(),
+                CommandError::Conversion(message)
+                    if message == "command_id is required: metadata is missing"
+            ));
+        }
+
+        #[test]
+        fn conversion_preserves_error_text() {
+            let error = "not a number".parse::<u64>().unwrap_err();
+            let expected = error.to_string();
+            assert!(matches!(
+                CommandError::conversion(error),
+                CommandError::Conversion(message) if message == expected
+            ));
+        }
+
+        #[test]
+        fn invalid_event_sequence_returns_conversion_error() {
+            assert!(matches!(
+                CommandError::invalid_event_sequence(),
+                CommandError::Conversion(message)
+                    if message == "sequence must be between 1 and i64::MAX"
+            ));
+        }
     }
 }

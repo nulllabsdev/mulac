@@ -10,6 +10,8 @@ use crate::contract::prelude::{
 use crate::error::prelude::CommandingApiError;
 use commanding::prelude::{
     CommandConsumer,
+    CommandProcessPort,
+    CommandReservePort,
     ReservableCommandSpec,
     //
 };
@@ -20,14 +22,22 @@ use std::sync::Arc;
 /// Running blocks on storage and command handlers; use
 /// `AsyncCommandingService` (feature `tokio`) from async handlers.
 pub struct CommandingService {
-    consumer: Arc<CommandConsumer>,
+    run: Arc<dyn Fn(RunCommandsRequest) -> RunCommandsResponse + Send + Sync>,
 }
 
 impl CommandingService {
     /// Wrap a consumer whose dispatcher the application or kernel assembled,
     /// for example `PersistentKernelHandle::command_consumer()`.
-    pub fn new(consumer: Arc<CommandConsumer>) -> Self {
-        Self { consumer }
+    pub fn new<R: CommandReservePort + CommandProcessPort + 'static>(
+        consumer: Arc<CommandConsumer<R>>,
+    ) -> Self {
+        Self {
+            run: Arc::new(move |request| {
+                RunCommandsResponse::from_result(
+                    consumer.consume(&ReservableCommandSpec::new(request.limit)),
+                )
+            }),
+        }
     }
 
     /// Execute up to `limit` due commands with the default retry limit.
@@ -39,10 +49,7 @@ impl CommandingService {
         request: RunCommandsRequest,
     ) -> Result<RunCommandsResponse, CommandingApiError> {
         request.validate()?;
-        let result = self
-            .consumer
-            .consume(&ReservableCommandSpec::new(request.limit));
-        Ok(RunCommandsResponse::from_result(result))
+        Ok((self.run)(request))
     }
 }
 

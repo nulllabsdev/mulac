@@ -1,0 +1,115 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="2230" height="1450" viewBox="0 0 2230 1450" role="img" aria-labelledby="title desc">
+  <title id="title">Shared command batch execution — Poem API and application worker</title>
+  <desc id="desc">Reserve a batch. Return immediately on reservation error. Otherwise process each command sequentially: run the handler, dispatch events, mark completed or failed, and collect errors. After all commands, return the reserved count if there were no errors, otherwise return the errors. An empty batch returns zero. The caller-specific entry and response handling are not included.</desc>
+  <metadata>Hand-arranged vector export of the shared execution Mermaid diagram in flow.md. All eleven nodes are taken from that diagram. No external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d} .node{font-size:22px} .edge{font-size:19px} .arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}</style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#405675" />
+    </marker>
+  </defs>
+  <rect width="2230" height="1450" fill="#f8fafc" />
+  <text x="55" y="52" font-size="32" font-weight="700">Shared command batch execution</text>
+  <text x="55" y="88" font-size="21">Same consumer for the Poem API and worker — no HTTP formatting, task joining, or polling shown</text>
+  <path d="M650,192.5 V240" class="arrow" />
+  <path d="M650,340 V400" class="arrow" />
+  <text x="755" y="370" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="755" dy="0">Ok(entries)</tspan>
+  </text>
+  <path d="M930,290 H2180 V750 H2155" class="arrow" />
+  <text x="1620" y="265" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1620" dy="0">Reservation failed: return its error; execute nothing</tspan>
+  </text>
+  <path d="M650,540 V600" class="arrow" />
+  <text x="710" y="570" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="710" dy="0">Yes</tspan>
+  </text>
+  <path d="M650,720 V790" class="arrow" />
+  <path d="M475,855 H330 V980" class="arrow" />
+  <text x="365" y="900" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="365" dy="0">Yes</tspan>
+  </text>
+  <path d="M825,855 H980 V965" class="arrow" />
+  <text x="1220" y="900" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1220" dy="0">No: handler or event-dispatch error</tspan>
+  </text>
+  <path d="M330,1080 V1140 H480 V1180" class="arrow" />
+  <path d="M980,1095 V1140 H820 V1180" class="arrow" />
+  <path d="M325,1235 H60 V470 H455" class="arrow" />
+  <text x="245" y="445" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="245" dy="0">Next command</tspan>
+  </text>
+  <path d="M845,470 H1380" class="arrow" />
+  <text x="1110" y="440" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1110" dy="0">No: batch finished or empty</tspan>
+  </text>
+  <path d="M1580,540 V610 H1410 V692.5" class="arrow" />
+  <text x="1480" y="580" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1480" dy="0">No</tspan>
+  </text>
+  <path d="M1780,470 H1920 V705" class="arrow" />
+  <text x="1850" y="440" class="edge" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1850" dy="0">Yes</tspan>
+  </text>
+  <rect x="420.0" y="107.5" width="460" height="85" rx="25" fill="#ddf4ff" stroke="#0969da" stroke-width="2" />
+  <text x="650" y="150" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">CommandConsumer::consume(&amp;spec)</tspan>
+  </text>
+  <rect x="370.0" y="240.0" width="560" height="100" rx="10" fill="#fff" stroke="#c1cbd8" stroke-width="2" />
+  <text x="650" y="275" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">Reserve up to spec.limit eligible commands</tspan>
+    <tspan x="650" dy="30">repository.reserve(&amp;spec)</tspan>
+  </text>
+  <polygon points="650,400.0 845.0,470 650,540.0 455.0,470" fill="#fff8dc" stroke="#9a6700" stroke-width="2" />
+  <text x="650" y="470" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">Another reserved command?</tspan>
+  </text>
+  <rect x="370.0" y="600.0" width="560" height="120" rx="10" fill="#fff" stroke="#c1cbd8" stroke-width="2" />
+  <text x="650" y="630" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">CommandDispatcher::dispatch</tspan>
+    <tspan x="650" dy="30">Run the registered command handler</tspan>
+    <tspan x="650" dy="30">Dispatch its resulting events</tspan>
+  </text>
+  <polygon points="650,790.0 825.0,855 650,920.0 475.0,855" fill="#fff8dc" stroke="#9a6700" stroke-width="2" />
+  <text x="650" y="855" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">Dispatch succeeded?</tspan>
+  </text>
+  <rect x="70.0" y="980.0" width="520" height="100" rx="10" fill="#fff" stroke="#c1cbd8" stroke-width="2" />
+  <text x="330" y="1030" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="330" dy="0">repository.completed(id, reservation_id)</tspan>
+  </text>
+  <rect x="670.0" y="965.0" width="620" height="130" rx="10" fill="#fff" stroke="#c1cbd8" stroke-width="2" />
+  <text x="980" y="1000" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="980" dy="0">repository.failed(id, reservation_id, max_attempts,</tspan>
+    <tspan x="980" dy="30">reason)</tspan>
+    <tspan x="980" dy="30">Apply repository retry/dead policy</tspan>
+  </text>
+  <rect x="325.0" y="1180.0" width="650" height="110" rx="10" fill="#fff" stroke="#c1cbd8" stroke-width="2" />
+  <text x="650" y="1220" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="650" dy="0">Collect dispatch and repository-update errors, if any</tspan>
+    <tspan x="650" dy="30">Continue even if this command failed</tspan>
+  </text>
+  <polygon points="1580,400.0 1780.0,470 1580,540.0 1380.0,470" fill="#fff8dc" stroke="#9a6700" stroke-width="2" />
+  <text x="1580" y="470" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1580" dy="0">Any collected errors?</tspan>
+  </text>
+  <rect x="1210.0" y="692.5" width="400" height="115" rx="25" fill="#ddf4ff" stroke="#0969da" stroke-width="2" />
+  <text x="1410" y="735" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1410" dy="0">Return Ok(reserved count)</tspan>
+    <tspan x="1410" dy="30">Empty batch: Ok(0)</tspan>
+  </text>
+  <rect x="1685.0" y="705.0" width="470" height="90" rx="25" fill="#fff1f1" stroke="#cf222e" stroke-width="2" />
+  <text x="1920" y="750" class="node" text-anchor="middle" dominant-baseline="middle">
+    <tspan x="1920" dy="0">Return Err(Vec of CommandError)</tspan>
+  </text>
+  <text x="1390" y="1015" class="edge" text-anchor="start" dominant-baseline="middle">
+    <tspan x="1390" dy="0">Failure does not stop the batch.</tspan>
+    <tspan x="1390" dy="30">Status-update errors are collected too.</tspan>
+  </text>
+  <text x="70" y="1360" class="edge" text-anchor="start" dominant-baseline="middle">
+    <tspan x="70" dy="0">Ok(count) only when no errors were collected; Err contains the error list, not a partial success count.</tspan>
+  </text>
+  <text x="70" y="1400" class="edge" text-anchor="start" dominant-baseline="middle">
+    <tspan x="70" dy="0">Handler effects, event dispatch and status updates are separate operations. Failures do not roll back earlier effects.</tspan>
+  </text>
+</svg>

@@ -25,7 +25,6 @@ use crate::service::prelude::CommandingService;
 use commanding::prelude::{
     Command,
     CommandConsumer,
-    CommandConsumerRepository,
     CommandDispatcher,
     CommandEnvelope,
     CommandError,
@@ -133,26 +132,6 @@ impl CommandReservePort for PanickingReservation {
     }
 }
 
-/// Accepts completion; optionally fails to mark commands failed.
-struct Process {
-    fail_marking: bool,
-}
-
-impl CommandProcessPort for Process {
-    fn completed(&self, _: Uuid, _: Uuid) -> Result<(), CommandError> {
-        Ok(())
-    }
-
-    fn failed(&self, _: Uuid, _: Uuid, _: i32, _: Option<String>) -> Result<(), CommandError> {
-        if self.fail_marking {
-            return Err(CommandError::Storage(
-                "failure could not be recorded".into(),
-            ));
-        }
-        Ok(())
-    }
-}
-
 /// Succeeds without emitting events, or fails every command.
 struct Handler {
     fail: bool,
@@ -185,7 +164,10 @@ fn service(
         Arc::new(Handler { fail: fail_handler }),
         Arc::new(UnusedEvents),
     ));
-    let repository = CommandConsumerRepository::new(reserve, Arc::new(Process { fail_marking }));
+    let repository = Arc::new(Repository {
+        reserve,
+        fail_marking,
+    });
     CommandingService::new(Arc::new(CommandConsumer::new(repository, dispatcher)))
 }
 
@@ -224,4 +206,30 @@ pub fn failing_handler_and_process_service() -> CommandingService {
 /// Panics during reservation.
 pub fn panicking_service() -> CommandingService {
     service(Arc::new(PanickingReservation), false, false)
+}
+
+struct Repository {
+    reserve: Arc<dyn CommandReservePort>,
+    fail_marking: bool,
+}
+
+impl CommandReservePort for Repository {
+    fn reserve(&self, spec: &ReservableCommandSpec) -> Result<Vec<CommandEnvelope>, CommandError> {
+        self.reserve.reserve(spec)
+    }
+}
+
+impl CommandProcessPort for Repository {
+    fn completed(&self, _: Uuid, _: Uuid) -> Result<(), CommandError> {
+        Ok(())
+    }
+
+    fn failed(&self, _: Uuid, _: Uuid, _: i32, _: Option<String>) -> Result<(), CommandError> {
+        if self.fail_marking {
+            return Err(CommandError::Storage(
+                "failure could not be recorded".into(),
+            ));
+        }
+        Ok(())
+    }
 }

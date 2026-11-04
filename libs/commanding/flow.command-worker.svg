@@ -1,0 +1,223 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3650" height="1836" viewBox="0 0 3650 1836" role="img" aria-labelledby="title desc">
+  <title id="title">Running commands via the application worker — shared execution on the right</title>
+  <desc id="desc">Caller-specific startup runs left to right in the upper lane. Enter the purple shared CommandConsumer execution box on the right and follow it downward. The raw batch result returns left into the lower caller-specific lane. The purple box has the same steps in the Poem and worker diagrams; it is not a new service or process. Error alternatives and the repeated per-command cycle are labeled.</desc>
+  <metadata>Hand-arranged SVG matching the flow.md diagram. Shared core content and geometry are identical in the Poem and worker exports. Native text and no external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d}.body{font-size:19px}.heading{font-size:23px;font-weight:700}.lane{font-size:27px;font-weight:700}.arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}.branch{fill:none;stroke:#8250df;stroke-width:2;marker-end:url(#arrow)}</style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#405675" />
+    </marker>
+  </defs>
+  <rect width="3650" height="1836" fill="white" />
+  <text x="55" y="55" class="lane">
+    <tspan x="55" dy="0">Running commands via the application worker</tspan>
+  </text>
+  <text x="55" y="98" class="body">
+    <tspan x="55" dy="0">Caller-specific start and return on the left • identical shared batch execution in the vertical box on the right</tspan>
+  </text>
+  <rect x="35" y="155" width="2600" height="687" rx="18" fill="#eff6ff" stroke="#0969da" stroke-width="2" />
+  <text x="65" y="197" class="lane">
+    <tspan x="65" dy="0">REQUEST / START →</tspan>
+  </text>
+  <rect x="35" y="1107" width="2600" height="534" rx="18" fill="#f0fff4" stroke="#1a7f37" stroke-width="2" />
+  <text x="65" y="1149" class="lane">
+    <tspan x="65" dy="0">← RETURN / HANDLE RESULT</tspan>
+  </text>
+  <g id="shared-execution">
+    <rect x="2700" y="155" width="900" height="1280" rx="18" fill="#f5f0ff" stroke="#8250df" stroke-width="3" />
+    <text x="2730" y="197" class="lane">
+      <tspan x="2730" dy="0">SHARED EXECUTION</tspan>
+    </text>
+    <text x="2730" y="230" class="body">
+      <tspan x="2730" dy="0">Same CommandConsumer path in API and worker</tspan>
+    </text>
+    <rect x="2750" y="250" width="800" height="134" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-consume" />
+    <text x="2768" y="282" class="heading">
+      <tspan x="2768" dy="0">ENTRY</tspan>
+    </text>
+    <text x="2768" y="322" class="body">
+      <tspan x="2768" dy="0">CommandConsumer::consume(&amp;spec)</tspan>
+      <tspan x="2768" dy="27">Shared synchronous batch execution</tspan>
+    </text>
+    <rect x="2750" y="429" width="800" height="188" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-reserve" />
+    <text x="2768" y="461" class="heading">
+      <tspan x="2768" dy="0">RESERVE</tspan>
+    </text>
+    <text x="2768" y="501" class="body">
+      <tspan x="2768" dy="0">1. repository.reserve(&amp;spec)</tspan>
+      <tspan x="2768" dy="27">Reserve up to spec.limit eligible commands</tspan>
+      <tspan x="2768" dy="27">Reservation failure: return Err([error]); execute nothing</tspan>
+      <tspan x="2768" dy="27">Empty batch: return Ok(0)</tspan>
+    </text>
+    <rect x="2750" y="662" width="800" height="188" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-execute" />
+    <text x="2768" y="694" class="heading">
+      <tspan x="2768" dy="0">EXECUTE ONE COMMAND</tspan>
+    </text>
+    <text x="2768" y="734" class="body">
+      <tspan x="2768" dy="0">2. For each reserved command, sequentially</tspan>
+      <tspan x="2768" dy="27">Select the registered handler and deserialize the command</tspan>
+      <tspan x="2768" dy="27">Execute the handler; build event envelopes and metadata</tspan>
+      <tspan x="2768" dy="27">Dispatch resulting events; stop this command on an error</tspan>
+    </text>
+    <rect x="2750" y="895" width="800" height="242" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-outcome" />
+    <text x="2768" y="927" class="heading">
+      <tspan x="2768" dy="0">RECORD OUTCOME / CONTINUE</tspan>
+    </text>
+    <text x="2768" y="967" class="body">
+      <tspan x="2768" dy="0">3. Record this command's outcome</tspan>
+      <tspan x="2768" dy="27">Success: repository.completed(id, reservation_id)</tspan>
+      <tspan x="2768" dy="27">Failure: repository.failed(id, reservation_id, max_attempts,</tspan>
+      <tspan x="2768" dy="27">reason)</tspan>
+      <tspan x="2768" dy="27">Collect dispatch and status-update errors</tspan>
+      <tspan x="2768" dy="27">Continue with the next reserved command, even after failure</tspan>
+    </text>
+    <rect x="2750" y="1182" width="800" height="188" rx="10" fill="#fff1b8" stroke="#9a6700" stroke-width="2" id="core-return" />
+    <text x="2768" y="1214" class="heading">
+      <tspan x="2768" dy="0">RETURN BATCH RESULT</tspan>
+    </text>
+    <text x="2768" y="1254" class="body">
+      <tspan x="2768" dy="0">4. Return the batch result to the caller</tspan>
+      <tspan x="2768" dy="27">No collected errors: Ok(reserved count)</tspan>
+      <tspan x="2768" dy="27">Errors: Err(Vec of CommandError)</tspan>
+      <tspan x="2768" dy="27">Empty batch: Ok(0); reservation failure: Err([error])</tspan>
+    </text>
+    <path d="M3150,384 V421" class="arrow" />
+    <path d="M3150,617 V654" class="arrow" />
+    <path d="M3150,850 V887" class="arrow" />
+    <path d="M3150,1137 V1174" class="arrow" />
+    <path d="M2750,494 H2720 V1157 H2950 V1174" class="branch" />
+    <path d="M3550,960 H3575 V727 H3558" class="branch" />
+    <text transform="translate(3592 843.5) rotate(-90)" font-size="16" text-anchor="middle">Next reserved command</text>
+    <text x="2730" y="1411" class="body">
+      <tspan x="2730" dy="0">Raw batch result — no HTTP formatting, polling, or task joining</tspan>
+    </text>
+  </g>
+  <rect x="90.0" y="250" width="550" height="542" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="108.0" y="283" class="heading">
+    <tspan x="108.0" dy="0">Application assembly — once</tspan>
+  </text>
+  <rect x="99.0" y="325" width="532" height="47" rx="6" fill="#ddf4ff" />
+  <text x="108.0" y="350" class="body">
+    <tspan x="108.0" dy="0">START — Application boot</tspan>
+  </text>
+  <line x1="108.0" x2="622.0" y1="386" y2="386" stroke="#e2e8f0" />
+  <text x="108.0" y="407" class="body">
+    <tspan x="108.0" dy="0">1. Register handlers with</tspan>
+    <tspan x="108.0" dy="27">KernelBuilder::command_handler</tspan>
+    <tspan x="108.0" dy="27">Build the persistent kernel</tspan>
+  </text>
+  <line x1="108.0" x2="622.0" y1="497" y2="497" stroke="#e2e8f0" />
+  <text x="108.0" y="518" class="body">
+    <tspan x="108.0" dy="0">2. kernel.command_consumer()</tspan>
+    <tspan x="108.0" dy="27">Get the shared CommandConsumer</tspan>
+  </text>
+  <line x1="108.0" x2="622.0" y1="581" y2="581" stroke="#e2e8f0" />
+  <text x="108.0" y="602" class="body">
+    <tspan x="108.0" dy="0">3. kernel.child_token()</tspan>
+    <tspan x="108.0" dy="27">Get a shutdown token</tspan>
+  </text>
+  <line x1="108.0" x2="622.0" y1="665" y2="665" stroke="#e2e8f0" />
+  <text x="108.0" y="686" class="body">
+    <tspan x="108.0" dy="0">4. tokio::spawn(run_command_worker(consumer,</tspan>
+    <tspan x="108.0" dy="27">token))</tspan>
+    <tspan x="108.0" dy="27">Application continues serving requests</tspan>
+  </text>
+  <rect x="1065.0" y="250" width="550" height="347" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="1083.0" y="283" class="heading">
+    <tspan x="1083.0" dy="0">Worker — sleep or stop</tspan>
+  </text>
+  <text x="1083.0" y="350" class="body">
+    <tspan x="1083.0" dy="0">tokio::select!</tspan>
+    <tspan x="1083.0" dy="27">Wait for cancellation or a one-second sleep</tspan>
+    <tspan x="1083.0" dy="27">Also waits before the first batch</tspan>
+  </text>
+  <line x1="1083.0" x2="1597.0" y1="440" y2="440" stroke="#e2e8f0" />
+  <rect x="1074.0" y="436" width="532" height="74" rx="6" fill="#fff1f1" />
+  <text x="1083.0" y="461" class="body">
+    <tspan x="1083.0" dy="0">Cancellation selected: break the loop</tspan>
+    <tspan x="1083.0" dy="27">Worker returns (); no further batch</tspan>
+  </text>
+  <line x1="1083.0" x2="1597.0" y1="524" y2="524" stroke="#e2e8f0" />
+  <text x="1083.0" y="545" class="body">
+    <tspan x="1083.0" dy="0">Sleep finished: start the next batch</tspan>
+  </text>
+  <rect x="2040.0" y="250" width="550" height="374" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="2058.0" y="283" class="heading">
+    <tspan x="2058.0" dy="0">Start the blocking job</tspan>
+  </text>
+  <text x="2058.0" y="350" class="body">
+    <tspan x="2058.0" dy="0">1. Arc::clone(&amp;consumer)</tspan>
+  </text>
+  <line x1="2058.0" x2="2572.0" y1="386" y2="386" stroke="#e2e8f0" />
+  <text x="2058.0" y="407" class="body">
+    <tspan x="2058.0" dy="0">2. tokio::task::spawn_blocking</tspan>
+    <tspan x="2058.0" dy="27">Closure calls</tspan>
+    <tspan x="2058.0" dy="27">consume(&amp;ReservableCommandSpec::new(10))</tspan>
+    <tspan x="2058.0" dy="27">Limit: 10; default max_attempts: 6</tspan>
+  </text>
+  <line x1="2058.0" x2="2572.0" y1="524" y2="524" stroke="#e2e8f0" />
+  <text x="2058.0" y="545" class="body">
+    <tspan x="2058.0" dy="0">Worker awaits this task</tspan>
+    <tspan x="2058.0" dy="27">No overlapping batches within this worker</tspan>
+  </text>
+  <rect x="2040.0" y="1182" width="550" height="233" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="2058.0" y="1215" class="heading">
+    <tspan x="2058.0" dy="0">Worker — await task</tspan>
+  </text>
+  <text x="2058.0" y="1282" class="body">
+    <tspan x="2058.0" dy="0">The spawn_blocking task completes</tspan>
+    <tspan x="2058.0" dy="27">The worker's .await resumes with</tspan>
+    <tspan x="2058.0" dy="27">Result&lt;Result&lt;usize, Vec&lt;CommandError&gt;&gt;,</tspan>
+    <tspan x="2058.0" dy="27">JoinError&gt;</tspan>
+  </text>
+  <rect x="1065.0" y="1182" width="550" height="404" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="1083.0" y="1215" class="heading">
+    <tspan x="1083.0" dy="0">Worker — match exactly one branch</tspan>
+  </text>
+  <text x="1083.0" y="1282" class="body">
+    <tspan x="1083.0" dy="0">Task result?</tspan>
+  </text>
+  <line x1="1083.0" x2="1597.0" y1="1318" y2="1318" stroke="#e2e8f0" />
+  <text x="1083.0" y="1339" class="body">
+    <tspan x="1083.0" dy="0">Ok(Ok(count)): do nothing</tspan>
+    <tspan x="1083.0" dy="27">No error log; count may be zero</tspan>
+  </text>
+  <line x1="1083.0" x2="1597.0" y1="1402" y2="1402" stroke="#e2e8f0" />
+  <text x="1083.0" y="1423" class="body">
+    <tspan x="1083.0" dy="0">Ok(Err(errors)): log each CommandError</tspan>
+    <tspan x="1083.0" dy="27">tracing::error!: command worker: {e}</tspan>
+  </text>
+  <line x1="1083.0" x2="1597.0" y1="1486" y2="1486" stroke="#e2e8f0" />
+  <text x="1083.0" y="1507" class="body">
+    <tspan x="1083.0" dy="0">Err(JoinError): log the task failure</tspan>
+    <tspan x="1083.0" dy="27">tracing::error!: command worker panicked: {e}</tspan>
+  </text>
+  <rect x="90.0" y="1182" width="550" height="260" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="108.0" y="1215" class="heading">
+    <tspan x="108.0" dy="0">Continue — not shutdown</tspan>
+  </text>
+  <rect x="99.0" y="1257" width="532" height="155" rx="6" fill="#ddf4ff" />
+  <text x="108.0" y="1282" class="body">
+    <tspan x="108.0" dy="0">CONTINUE — next loop iteration</tspan>
+    <tspan x="108.0" dy="27">Return to tokio::select! in the upper lane</tspan>
+    <tspan x="108.0" dy="27">Wait one second or exit on cancellation</tspan>
+    <tspan x="108.0" dy="27">Do not repeat application boot or spawn a new</tspan>
+    <tspan x="108.0" dy="27">worker</tspan>
+  </text>
+  <path d="M640.0,310 H1057.0" class="arrow" />
+  <path d="M1615.0,310 H2032.0" class="arrow" />
+  <path d="M2590.0,310 H2742" class="arrow" />
+  <path d="M2750,1242 H2598.0" class="arrow" />
+  <path d="M2040.0,1242 H1623.0" class="arrow" />
+  <path d="M1065.0,1242 H648.0" class="arrow" />
+  <path d="M90,1242 H55 V225 H1340.0 V242" class="arrow" />
+  <text x="65" y="1691" class="body">
+    <tspan x="65" dy="0">All result branches loop back to sleep/select, not application boot. Cancellation exits the worker; an in-flight batch is not interrupted.</tspan>
+  </text>
+  <text x="65" y="1736" class="body">
+    <tspan x="65" dy="0">Error branches are alternatives, not additional success steps. Reservation failure skips execution; empty batches return zero. See flow.command-consumer.svg for the detailed shared loop.</tspan>
+  </text>
+  <text x="65" y="1801" class="body">
+    <tspan x="65" dy="0">Handler effects, event dispatch and outcome updates are separate operations, not one atomic transaction. Caller phases resume existing calls.</tspan>
+  </text>
+</svg>

@@ -1,0 +1,283 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4950" height="1857" viewBox="0 0 4950 1857" role="img" aria-labelledby="title desc">
+  <title id="title">Running commands via the Axum API — shared execution on the right</title>
+  <desc id="desc">Follow the upper request lane from the framework-specific edge into the amber HTTP box shared by Poem and Axum. It contains the common request/response contracts and AsyncCommandingService, including blocking execution, response construction and task-error sanitization. Enter the purple shared execution core on the right. Return left through the lower HTTP response lane to framework-specific rendering. The worker uses the purple core but bypasses the amber HTTP box. Boxes group existing responsibilities; they are not new services.</desc>
+  <metadata>Hand-arranged SVG matching the flow.md diagram. Shared core content and geometry are identical in the Poem, Axum and worker exports. Native text and no external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d}.body{font-size:19px}.heading{font-size:23px;font-weight:700}.lane{font-size:27px;font-weight:700}.arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}.branch{fill:none;stroke:#8250df;stroke-width:2;marker-end:url(#arrow)}</style>
+  <defs>
+    <marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto">
+      <path d="M0,0 L10,5 L0,10 Z" fill="#405675" />
+    </marker>
+  </defs>
+  <rect width="4950" height="1857" fill="white" />
+  <text x="55" y="55" class="lane">
+    <tspan x="55" dy="0">Running commands via the Axum API</tspan>
+  </text>
+  <text x="55" y="98" class="body">
+    <tspan x="55" dy="0">Framework-specific HTTP edges on the left • shared HTTP contracts and bridge in amber • shared execution core in purple</tspan>
+  </text>
+  <rect x="35" y="155" width="3900" height="657" rx="18" fill="#eff6ff" stroke="#0969da" stroke-width="2" />
+  <text x="65" y="197" class="lane">
+    <tspan x="65" dy="0">REQUEST / START →</tspan>
+  </text>
+  <rect x="35" y="1107" width="3900" height="555" rx="18" fill="#f0fff4" stroke="#1a7f37" stroke-width="2" />
+  <text x="65" y="1149" class="lane">
+    <tspan x="65" dy="0">← RETURN / HANDLE RESULT</tspan>
+  </text>
+  <g id="shared-http">
+    <rect x="2660" y="155" width="1260" height="1507.0" rx="18" fill="#fff8e8" stroke="#bf8700" stroke-width="3" />
+    <text x="2690" y="197" class="lane">HTTP — SHARED BY POEM + AXUM</text>
+    <text x="2690" y="230" class="body">RunCommandsRequest • RunCommandsResponse • CommandingApiError</text>
+    <text x="2690" y="740" class="heading">SHARED CONTRACTS — types, not extra execution steps</text>
+    <text x="2690" y="782" class="body">Input: RunCommandsRequest, validated before execution</text>
+    <text x="2690" y="817" class="body">Output: RunCommandsResponse; task failure: CommandingApiError</text>
+    <text x="2690" y="852" class="body">No Poem/Axum-specific types here. The worker bypasses this HTTP box.</text>
+    <rect x="2690.0" y="250" width="550" height="233" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+    <text x="2708.0" y="283" class="heading">
+      <tspan x="2708.0" dy="0">AsyncCommandingService — start task</tspan>
+    </text>
+    <text x="2708.0" y="350" class="body">
+      <tspan x="2708.0" dy="0">AsyncCommandingService::run</tspan>
+      <tspan x="2708.0" dy="27">tokio::task::spawn_blocking</tspan>
+      <tspan x="2708.0" dy="27">Runs the closure captured by</tspan>
+      <tspan x="2708.0" dy="27">AsyncCommandingService::new</tspan>
+    </text>
+    <rect x="3340.0" y="250" width="550" height="287" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+    <text x="3358.0" y="283" class="heading">
+      <tspan x="3358.0" dy="0">Blocking closure — call consumer</tspan>
+    </text>
+    <text x="3358.0" y="350" class="body">
+      <tspan x="3358.0" dy="0">AsyncCommandingService closure — on the</tspan>
+      <tspan x="3358.0" dy="27">blocking thread</tspan>
+      <tspan x="3358.0" dy="27">Build</tspan>
+      <tspan x="3358.0" dy="27">ReservableCommandSpec::new(request.limit())</tspan>
+      <tspan x="3358.0" dy="27">Default max_attempts: 6</tspan>
+      <tspan x="3358.0" dy="27">Call consumer.consume(&amp;spec)</tspan>
+    </text>
+    <rect x="3340.0" y="1182" width="550" height="314" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+    <text x="3358.0" y="1215" class="heading">
+      <tspan x="3358.0" dy="0">Blocking closure — response</tspan>
+    </text>
+    <rect x="3349.0" y="1257" width="532" height="209" rx="6" fill="#fff1b8" />
+    <text x="3358.0" y="1282" class="body">
+      <tspan x="3358.0" dy="0">RESPONSE CONSTRUCTION STARTS HERE</tspan>
+      <tspan x="3358.0" dy="27">The closure resumes after the consumer</tspan>
+      <tspan x="3358.0" dy="27">RunCommandsResponse::from_result(result)</tspan>
+      <tspan x="3358.0" dy="27">Success: processed = Some(count), errors = []</tspan>
+      <tspan x="3358.0" dy="27">Consumer errors: processed = None, errors =</tspan>
+      <tspan x="3358.0" dy="27">messages</tspan>
+      <tspan x="3358.0" dy="27">Return RunCommandsResponse</tspan>
+    </text>
+    <rect x="2690.0" y="1182" width="550" height="320" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+    <text x="2708.0" y="1215" class="heading">
+      <tspan x="2708.0" dy="0">AsyncCommandingService — await</tspan>
+    </text>
+    <text x="2708.0" y="1282" class="body">
+      <tspan x="2708.0" dy="0">Blocking task joined?</tspan>
+    </text>
+    <line x1="2708.0" x2="3222.0" y1="1318" y2="1318" stroke="#e2e8f0" />
+    <text x="2708.0" y="1339" class="body">
+      <tspan x="2708.0" dy="0">Ok(response): return Ok(response)</tspan>
+    </text>
+    <line x1="2708.0" x2="3222.0" y1="1375" y2="1375" stroke="#e2e8f0" />
+    <text x="2708.0" y="1396" class="body">
+      <tspan x="2708.0" dy="0">Err(JoinError): return</tspan>
+      <tspan x="2708.0" dy="27">CommandingApiError::RunTaskFailed</tspan>
+      <tspan x="2708.0" dy="27">Client sees only a logged error ID</tspan>
+    </text>
+  </g>
+  <g id="shared-execution" transform="translate(1300 0)">
+    <rect x="2700" y="155" width="900" height="1280" rx="18" fill="#f5f0ff" stroke="#8250df" stroke-width="3" />
+    <text x="2730" y="197" class="lane">
+      <tspan x="2730" dy="0">SHARED EXECUTION</tspan>
+    </text>
+    <text x="2730" y="230" class="body">
+      <tspan x="2730" dy="0">Same CommandConsumer path in API and worker</tspan>
+    </text>
+    <rect x="2750" y="250" width="800" height="134" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-consume" />
+    <text x="2768" y="282" class="heading">
+      <tspan x="2768" dy="0">ENTRY</tspan>
+    </text>
+    <text x="2768" y="322" class="body">
+      <tspan x="2768" dy="0">CommandConsumer::consume(&amp;spec)</tspan>
+      <tspan x="2768" dy="27">Shared synchronous batch execution</tspan>
+    </text>
+    <rect x="2750" y="429" width="800" height="188" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-reserve" />
+    <text x="2768" y="461" class="heading">
+      <tspan x="2768" dy="0">RESERVE</tspan>
+    </text>
+    <text x="2768" y="501" class="body">
+      <tspan x="2768" dy="0">1. repository.reserve(&amp;spec)</tspan>
+      <tspan x="2768" dy="27">Reserve up to spec.limit eligible commands</tspan>
+      <tspan x="2768" dy="27">Reservation failure: return Err([error]); execute nothing</tspan>
+      <tspan x="2768" dy="27">Empty batch: return Ok(0)</tspan>
+    </text>
+    <rect x="2750" y="662" width="800" height="188" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-execute" />
+    <text x="2768" y="694" class="heading">
+      <tspan x="2768" dy="0">EXECUTE ONE COMMAND</tspan>
+    </text>
+    <text x="2768" y="734" class="body">
+      <tspan x="2768" dy="0">2. For each reserved command, sequentially</tspan>
+      <tspan x="2768" dy="27">Select the registered handler and deserialize the command</tspan>
+      <tspan x="2768" dy="27">Execute the handler; build event envelopes and metadata</tspan>
+      <tspan x="2768" dy="27">Dispatch resulting events; stop this command on an error</tspan>
+    </text>
+    <rect x="2750" y="895" width="800" height="242" rx="10" fill="#fff" stroke="#c8b6ed" stroke-width="2" id="core-outcome" />
+    <text x="2768" y="927" class="heading">
+      <tspan x="2768" dy="0">RECORD OUTCOME / CONTINUE</tspan>
+    </text>
+    <text x="2768" y="967" class="body">
+      <tspan x="2768" dy="0">3. Record this command's outcome</tspan>
+      <tspan x="2768" dy="27">Success: repository.completed(id, reservation_id)</tspan>
+      <tspan x="2768" dy="27">Failure: repository.failed(id, reservation_id, max_attempts,</tspan>
+      <tspan x="2768" dy="27">reason)</tspan>
+      <tspan x="2768" dy="27">Collect dispatch and status-update errors</tspan>
+      <tspan x="2768" dy="27">Continue with the next reserved command, even after failure</tspan>
+    </text>
+    <rect x="2750" y="1182" width="800" height="188" rx="10" fill="#fff1b8" stroke="#9a6700" stroke-width="2" id="core-return" />
+    <text x="2768" y="1214" class="heading">
+      <tspan x="2768" dy="0">RETURN BATCH RESULT</tspan>
+    </text>
+    <text x="2768" y="1254" class="body">
+      <tspan x="2768" dy="0">4. Return the batch result to the caller</tspan>
+      <tspan x="2768" dy="27">No collected errors: Ok(reserved count)</tspan>
+      <tspan x="2768" dy="27">Errors: Err(Vec of CommandError)</tspan>
+      <tspan x="2768" dy="27">Empty batch: Ok(0); reservation failure: Err([error])</tspan>
+    </text>
+    <path d="M3150,384 V421" class="arrow" />
+    <path d="M3150,617 V654" class="arrow" />
+    <path d="M3150,850 V887" class="arrow" />
+    <path d="M3150,1137 V1174" class="arrow" />
+    <path d="M2750,494 H2720 V1157 H2950 V1174" class="branch" />
+    <path d="M3550,960 H3575 V727 H3558" class="branch" />
+    <text transform="translate(3592 843.5) rotate(-90)" font-size="16" text-anchor="middle">Next reserved command</text>
+    <text x="2730" y="1411" class="body">
+      <tspan x="2730" dy="0">Raw batch result — no HTTP formatting, polling, or task joining</tspan>
+    </text>
+  </g>
+  <rect x="90.0" y="250" width="550" height="233" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="108.0" y="283" class="heading">
+    <tspan x="108.0" dy="0">HTTP client</tspan>
+  </text>
+  <rect x="99.0" y="325" width="532" height="128" rx="6" fill="#ddf4ff" />
+  <text x="108.0" y="350" class="body">
+    <tspan x="108.0" dy="0">START — HTTP client</tspan>
+    <tspan x="108.0" dy="27">POST /commands/run</tspan>
+    <tspan x="108.0" dy="27">Content-Type: application/json; body: {"limit":</tspan>
+    <tspan x="108.0" dy="27">10}</tspan>
+  </text>
+  <rect x="740.0" y="250" width="550" height="512" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="758.0" y="283" class="heading">
+    <tspan x="758.0" dy="0">RunCommands — extractor</tspan>
+  </text>
+  <text x="758.0" y="350" class="body">
+    <tspan x="758.0" dy="0">1. json_body(req, state)</tspan>
+    <tspan x="758.0" dy="27">Extract Json&lt;serde_json::Value&gt;</tspan>
+  </text>
+  <line x1="758.0" x2="1272.0" y1="413" y2="413" stroke="#e2e8f0" />
+  <text x="758.0" y="434" class="body">
+    <tspan x="758.0" dy="0">2. RunCommandsRequest::from_json(value)</tspan>
+    <tspan x="758.0" dy="27">Require an integer limit in 1..=1000</tspan>
+    <tspan x="758.0" dy="27">Wrap the validated request in RunCommands</tspan>
+  </text>
+  <line x1="758.0" x2="1272.0" y1="524" y2="524" stroke="#e2e8f0" />
+  <rect x="749.0" y="520" width="532" height="74" rx="6" fill="#fff1f1" />
+  <text x="758.0" y="545" class="body">
+    <tspan x="758.0" dy="0">Body rejection → CommandingHttpError::Body</tspan>
+    <tspan x="758.0" dy="27">Return via IntoResponse; skip the route handler</tspan>
+  </text>
+  <line x1="758.0" x2="1272.0" y1="608" y2="608" stroke="#e2e8f0" />
+  <rect x="749.0" y="604" width="532" height="128" rx="6" fill="#fff1f1" />
+  <text x="758.0" y="629" class="body">
+    <tspan x="758.0" dy="0">Invalid fields or limit →</tspan>
+    <tspan x="758.0" dy="27">CommandingHttpError::Commanding</tspan>
+    <tspan x="758.0" dy="27">Return HTTP 400 via IntoResponse; skip the</tspan>
+    <tspan x="758.0" dy="27">route handler</tspan>
+  </text>
+  <rect x="1390.0" y="250" width="550" height="206" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="1408.0" y="283" class="heading">
+    <tspan x="1408.0" dy="0">Axum route handler</tspan>
+  </text>
+  <text x="1408.0" y="350" class="body">
+    <tspan x="1408.0" dy="0">run_commands(State(commands), request:</tspan>
+    <tspan x="1408.0" dy="27">RunCommands)</tspan>
+    <tspan x="1408.0" dy="27">Calls commands.run(request).await</tspan>
+  </text>
+  <rect x="2040.0" y="250" width="550" height="233" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="2058.0" y="283" class="heading">
+    <tspan x="2058.0" dy="0">CommandingAdapter — request</tspan>
+  </text>
+  <text x="2058.0" y="350" class="body">
+    <tspan x="2058.0" dy="0">CommandingAdapter::run</tspan>
+    <tspan x="2058.0" dy="27">Unwrap request.0</tspan>
+    <tspan x="2058.0" dy="27">Call</tspan>
+    <tspan x="2058.0" dy="27">AsyncCommandingService::run(request.0).await</tspan>
+  </text>
+  <rect x="2040.0" y="1182" width="550" height="260" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="2058.0" y="1215" class="heading">
+    <tspan x="2058.0" dy="0">CommandingAdapter — resume</tspan>
+  </text>
+  <text x="2058.0" y="1282" class="body">
+    <tspan x="2058.0" dy="0">CommandingAdapter::run resumes</tspan>
+    <tspan x="2058.0" dy="27">Ok(response): return</tspan>
+    <tspan x="2058.0" dy="27">Ok(CommandsRunResponse(response))</tspan>
+    <tspan x="2058.0" dy="27">Err(error): ? converts it to</tspan>
+    <tspan x="2058.0" dy="27">CommandingHttpError</tspan>
+  </text>
+  <rect x="1390.0" y="1182" width="550" height="206" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="1408.0" y="1215" class="heading">
+    <tspan x="1408.0" dy="0">Axum route handler — return</tspan>
+  </text>
+  <text x="1408.0" y="1282" class="body">
+    <tspan x="1408.0" dy="0">run_commands returns unchanged</tspan>
+    <tspan x="1408.0" dy="27">Result&lt;CommandsRunResponse,</tspan>
+    <tspan x="1408.0" dy="27">CommandingHttpError&gt;</tspan>
+  </text>
+  <rect x="740.0" y="1182" width="550" height="425" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="758.0" y="1215" class="heading">
+    <tspan x="758.0" dy="0">IntoResponse — success OR error</tspan>
+  </text>
+  <text x="758.0" y="1282" class="body">
+    <tspan x="758.0" dy="0">CommandsRunResponse::into_response</tspan>
+    <tspan x="758.0" dy="27">Json(self.0).into_response()</tspan>
+    <tspan x="758.0" dy="27">HTTP 200 + JSON {processed, errors}</tspan>
+  </text>
+  <line x1="758.0" x2="1272.0" y1="1372" y2="1372" stroke="#e2e8f0" />
+  <text x="758.0" y="1393" class="body">
+    <tspan x="758.0" dy="0">CommandingHttpError::into_response</tspan>
+    <tspan x="758.0" dy="27">Commanding error: HTTP 400 for client errors,</tspan>
+    <tspan x="758.0" dy="27">500 for task failure</tspan>
+    <tspan x="758.0" dy="27">Body rejection: rejection_response(rejection)</tspan>
+    <tspan x="758.0" dy="27">Normalize JsonDataError to 400; preserve other</tspan>
+    <tspan x="758.0" dy="27">rejection statuses</tspan>
+    <tspan x="758.0" dy="27">Errors are plain text, not the batch JSON shape</tspan>
+  </text>
+  <rect x="90.0" y="1182" width="550" height="152" rx="10" fill="white" stroke="#c1cbd8" stroke-width="2" />
+  <text x="108.0" y="1215" class="heading">
+    <tspan x="108.0" dy="0">HTTP client</tspan>
+  </text>
+  <rect x="99.0" y="1257" width="532" height="47" rx="6" fill="#ddf4ff" />
+  <text x="108.0" y="1282" class="body">
+    <tspan x="108.0" dy="0">FINISH — HTTP client receives the response</tspan>
+  </text>
+  <path d="M640.0,310 H732.0" class="arrow" />
+  <path d="M1290.0,310 H1382.0" class="arrow" />
+  <path d="M1940.0,310 H2032.0" class="arrow" />
+  <path d="M2590.0,310 H2682.0" class="arrow" />
+  <path d="M3240.0,310 H3332.0" class="arrow" />
+  <path d="M3890.0,310 H4042" class="arrow" />
+  <path d="M4050,1242 H3898.0" class="arrow" />
+  <path d="M3340.0,1242 H3248.0" class="arrow" />
+  <path d="M2690.0,1242 H2598.0" class="arrow" />
+  <path d="M2040.0,1242 H1948.0" class="arrow" />
+  <path d="M1390.0,1242 H1298.0" class="arrow" />
+  <path d="M740.0,1242 H648.0" class="arrow" />
+  <text x="65" y="1712" class="body">
+    <tspan x="65" dy="0">Extraction errors bypass shared execution and go directly to IntoResponse. Consumer return is shared; HTTP response construction starts in the lower blocking-closure panel.</tspan>
+  </text>
+  <text x="65" y="1757" class="body">
+    <tspan x="65" dy="0">Error branches are alternatives, not additional success steps. Reservation failure skips execution; empty batches return zero. See flow.command-consumer.svg for the detailed shared loop.</tspan>
+  </text>
+  <text x="65" y="1822" class="body">
+    <tspan x="65" dy="0">Handler effects, event dispatch and outcome updates are separate operations, not one atomic transaction. Caller phases resume existing calls.</tspan>
+  </text>
+</svg>
