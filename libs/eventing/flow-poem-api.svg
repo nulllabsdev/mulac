@@ -1,0 +1,189 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="4885" height="2090" viewBox="0 0 4885 2090" role="img" aria-labelledby="title desc">
+  <title id="title">Running events via the Poem API</title>
+  <desc id="desc">Upper request/work lane runs left to right; shared execution is on the right; lower return lane runs right to left. Errors bypass success-only steps. The amber panel contains shared HTTP contracts and blocking adaptation, separately from consumer execution.</desc>
+  <metadata>Hand-arranged native vector diagram. Editable Mermaid counterpart in flow.md has an independent automatic layout. No external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d}.arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}.branch{fill:none;stroke:#8250df;stroke-width:3;stroke-dasharray:8 5;marker-end:url(#arrow)}</style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#405675"/></marker></defs>
+  <rect width="4885" height="2090" fill="#f8fafc"/>
+  <text x="55" y="55" font-size="32" text-anchor="start" font-weight="700">Running events via the Poem API</text>
+  <text x="55" y="100" font-size="22" text-anchor="start">Framework edge at left; shared HTTP adaptation in amber; shared batch execution in purple.</text>
+  <rect x="60" y="150" width="3550" height="560" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <rect x="60" y="1330" width="3550" height="575" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="80" y="195" font-size="27" text-anchor="start" font-weight="700">REQUEST / START →</text>
+  <text x="80" y="1375" font-size="27" text-anchor="start" font-weight="700">← RETURN / HANDLE RESULT</text>
+  <rect x="2300" y="145" width="1280" height="1775" rx="15" fill="#fff8e8" stroke="#bf8700" stroke-width="2"/>
+  <text x="2320" y="195" font-size="27" text-anchor="start" font-weight="700">HTTP — SHARED BY POEM AND AXUM</text>
+  <text x="2320" y="830" font-size="25" text-anchor="start" font-weight="700">CONTRACTS AND BRIDGE — src/http/</text>
+  <text x="2320" y="880" font-size="22" text-anchor="start">RunEventsRequest / RunEventsResponse</text>
+  <text x="2320" y="922" font-size="22" text-anchor="start">AsyncEventingService</text>
+  <text x="2320" y="964" font-size="22" text-anchor="start">Contracts are data, not extra execution steps.</text>
+  <text x="2320" y="1006" font-size="22" text-anchor="start">Workers bypass this entire panel.</text>
+  <rect x="3670" y="145" width="1160" height="1775" rx="15" fill="#f5f0ff" stroke="#8250df" stroke-width="2"/>
+  <text x="3700" y="195" font-size="26" text-anchor="start" font-weight="700">SHARED BATCH EXECUTION — src/execution/</text>
+<g id="request_0" data-box="80 245 520 430">
+  <rect x="80" y="245" width="520" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="102" y="281" font-size="24" text-anchor="start" font-weight="700">HTTP client</text>
+  <text x="102" y="325" font-size="22" text-anchor="start">POST /events/run</text>
+  <text x="102" y="364" font-size="22" text-anchor="start">Content-Type: application/json</text>
+  <text x="102" y="403" font-size="22" text-anchor="start">Body: {&quot;limit&quot;: 10}</text>
+</g>
+<g id="response_0" data-box="80 1425 520 430">
+  <rect x="80" y="1425" width="520" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="102" y="1461" font-size="24" text-anchor="start" font-weight="700">HTTP client</text>
+  <text x="102" y="1505" font-size="22" text-anchor="start">FINISH: receive HTTP response.</text>
+  <text x="102" y="1544" font-size="22" text-anchor="start">HTTP 200 can contain batch errors;</text>
+  <text x="102" y="1573" font-size="22" text-anchor="start">inspect processed and errors.</text>
+</g>
+<g id="request_1" data-box="640 245 520 430">
+  <rect x="640" y="245" width="520" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="662" y="281" font-size="24" text-anchor="start" font-weight="700">Poem OpenAPI extraction</text>
+  <text x="662" y="325" font-size="22" text-anchor="start">Parse Json&lt;RunRequest&gt;.</text>
+  <text x="662" y="364" font-size="22" text-anchor="start">Validate integer limit: 1..=1000.</text>
+  <text x="662" y="403" font-size="22" text-anchor="start">Invalid input: skip endpoint and</text>
+  <text x="662" y="432" font-size="22" text-anchor="start">execution; render HTTP error.</text>
+</g>
+<g id="response_1" data-box="640 1425 520 430">
+  <rect x="640" y="1425" width="520" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="662" y="1461" font-size="24" text-anchor="start" font-weight="700">Poem renders response</text>
+  <text x="662" y="1505" font-size="22" text-anchor="start">Success: 200 + JSON {processed,</text>
+  <text x="662" y="1534" font-size="22" text-anchor="start">errors}.</text>
+  <text x="662" y="1573" font-size="22" text-anchor="start">Errors: status and error text, not</text>
+  <text x="662" y="1602" font-size="22" text-anchor="start">batch JSON.</text>
+  <text x="662" y="1641" font-size="22" text-anchor="start">400: invalid request; 500: task</text>
+  <text x="662" y="1670" font-size="22" text-anchor="start">failure.</text>
+</g>
+<path d="M600,460 H640" class="arrow"/>
+<path d="M640,1640 H600" class="arrow"/>
+<g id="request_2" data-box="1200 245 520 430">
+  <rect x="1200" y="245" width="520" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="1222" y="281" font-size="24" text-anchor="start" font-weight="700">EventingApi endpoint</text>
+  <text x="1222" y="325" font-size="22" text-anchor="start">run_eventing(request:</text>
+  <text x="1222" y="354" font-size="22" text-anchor="start">Json&lt;RunRequest&gt;)</text>
+  <text x="1222" y="393" font-size="22" text-anchor="start">Calls</text>
+  <text x="1222" y="422" font-size="22" text-anchor="start">self.adapter.run(request).await.</text>
+</g>
+<g id="response_2" data-box="1200 1425 520 430">
+  <rect x="1200" y="1425" width="520" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="1222" y="1461" font-size="24" text-anchor="start" font-weight="700">Endpoint returns unchanged</text>
+  <text x="1222" y="1505" font-size="22" text-anchor="start">poem::Result&lt;Json&lt;RunResponse&gt;&gt;</text>
+</g>
+<path d="M1160,460 H1200" class="arrow"/>
+<path d="M1200,1640 H1160" class="arrow"/>
+<g id="request_3" data-box="1760 245 520 430">
+  <rect x="1760" y="245" width="520" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="1782" y="281" font-size="24" text-anchor="start" font-weight="700">EventingAdapter request</text>
+  <text x="1782" y="325" font-size="22" text-anchor="start">RunEventsRequest::try_from(request.0)</text>
+  <text x="1782" y="364" font-size="22" text-anchor="start">Validate limit; error maps to HTTP</text>
+  <text x="1782" y="393" font-size="22" text-anchor="start">400.</text>
+  <text x="1782" y="432" font-size="22" text-anchor="start">AsyncEventingService::run(request).await</text>
+</g>
+<g id="response_3" data-box="1760 1425 520 430">
+  <rect x="1760" y="1425" width="520" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="1782" y="1461" font-size="24" text-anchor="start" font-weight="700">EventingAdapter resumes</text>
+  <text x="1782" y="1505" font-size="22" text-anchor="start">Ok: convert RunEventsResponse to</text>
+  <text x="1782" y="1534" font-size="22" text-anchor="start">Poem RunResponse; wrap in Json.</text>
+  <text x="1782" y="1573" font-size="22" text-anchor="start">Err: map API error to poem::Error.</text>
+</g>
+<path d="M1720,460 H1760" class="arrow"/>
+<path d="M1760,1640 H1720" class="arrow"/>
+<g id="request_4" data-box="2320 245 600 430">
+  <rect x="2320" y="245" width="600" height="430" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="2342" y="281" font-size="24" text-anchor="start" font-weight="700">AsyncEventingService</text>
+  <text x="2342" y="325" font-size="22" text-anchor="start">tokio::task::spawn_blocking</text>
+  <text x="2342" y="364" font-size="22" text-anchor="start">Run closure captured by</text>
+  <text x="2342" y="393" font-size="22" text-anchor="start">AsyncEventingService::new.</text>
+</g>
+<g id="response_4" data-box="2320 1425 600 430">
+  <rect x="2320" y="1425" width="600" height="430" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="2342" y="1461" font-size="24" text-anchor="start" font-weight="700">AsyncEventingService awaits</text>
+  <text x="2342" y="1505" font-size="22" text-anchor="start">Join succeeds: return response.</text>
+  <text x="2342" y="1544" font-size="22" text-anchor="start">Join fails: RunTaskFailed.</text>
+  <text x="2342" y="1583" font-size="22" text-anchor="start">Client sees only a logged error ID.</text>
+  <text x="2342" y="1622" font-size="22" text-anchor="start">Task failure can bypass normal formatting.</text>
+</g>
+<path d="M2280,460 H2320" class="arrow"/>
+<path d="M2320,1640 H2280" class="arrow"/>
+<g id="request_5" data-box="2960 245 600 430">
+  <rect x="2960" y="245" width="600" height="430" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="2982" y="281" font-size="24" text-anchor="start" font-weight="700">Blocking closure</text>
+  <text x="2982" y="325" font-size="22" text-anchor="start">Request already valid by construction.</text>
+  <text x="2982" y="364" font-size="22" text-anchor="start">ReservableEventSpec::new(request.limit())</text>
+  <text x="2982" y="403" font-size="22" text-anchor="start">Default max_attempts: 6.</text>
+  <text x="2982" y="442" font-size="22" text-anchor="start">consumer.consume(&amp;spec)</text>
+</g>
+<g id="response_5" data-box="2960 1425 600 430">
+  <rect x="2960" y="1425" width="600" height="430" rx="15" fill="#fff1b8" stroke="#bf8700" stroke-width="2"/>
+  <text x="2982" y="1461" font-size="24" text-anchor="start" font-weight="700">RESPONSE CONSTRUCTION STARTS</text>
+  <text x="2982" y="1505" font-size="22" text-anchor="start">Blocking closure resumes.</text>
+  <text x="2982" y="1544" font-size="22" text-anchor="start">RunEventsResponse::from_result(result)</text>
+  <text x="2982" y="1583" font-size="22" text-anchor="start">Ok(n): processed = Some(n), errors = [].</text>
+  <text x="2982" y="1622" font-size="22" text-anchor="start">Err(errors): processed = None; log each</text>
+  <text x="2982" y="1651" font-size="22" text-anchor="start">error; return its ID.</text>
+  <text x="2982" y="1690" font-size="22" text-anchor="start">Return response from closure.</text>
+</g>
+<path d="M2920,460 H2960" class="arrow"/>
+<path d="M2960,1640 H2920" class="arrow"/>
+<g id="shared-execution" transform="translate(3700 0)">
+<g id="core_0" data-box="0 245 1100 160">
+  <rect x="0" y="245" width="1100" height="160" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="281" font-size="24" text-anchor="start" font-weight="700">ENTRY</text>
+  <text x="22" y="325" font-size="22" text-anchor="start">EventConsumer::consume(&amp;spec)</text>
+  <text x="22" y="364" font-size="22" text-anchor="start">src/execution/event_consumer.rs</text>
+</g>
+<g id="core_1" data-box="0 490 1100 220">
+  <rect x="0" y="490" width="1100" height="220" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="526" font-size="24" text-anchor="start" font-weight="700">RESERVE</text>
+  <text x="22" y="570" font-size="22" text-anchor="start">repository.reserve(&amp;spec)</text>
+  <text x="22" y="609" font-size="22" text-anchor="start">Reservation failure: Err([error]); execute nothing.</text>
+  <text x="22" y="648" font-size="22" text-anchor="start">Empty batch: Ok(0); no item work.</text>
+</g>
+<path d="M550.0,405 V490" class="arrow"/>
+<g id="core_2" data-box="0 800 1100 290">
+  <rect x="0" y="800" width="1100" height="290" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="836" font-size="24" text-anchor="start" font-weight="700">EXECUTE ONE ITEM</text>
+  <text x="22" y="880" font-size="22" text-anchor="start">Convert to NewEventEnvelope; preserve metadata.</text>
+  <text x="22" y="919" font-size="22" text-anchor="start">EventDispatcher::dispatch(&amp;envelope)</text>
+  <text x="22" y="958" font-size="22" text-anchor="start">Calls configured EventSubscriberPort::handle(&amp;envelope).</text>
+</g>
+<path d="M550.0,710 V800" class="arrow"/>
+<g id="core_3" data-box="0 1190 1100 290">
+  <rect x="0" y="1190" width="1100" height="290" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="1226" font-size="24" text-anchor="start" font-weight="700">RECORD OUTCOME AND CONTINUE</text>
+  <text x="22" y="1270" font-size="22" text-anchor="start">Operation success: completed(id, reservation_id).</text>
+  <text x="22" y="1309" font-size="22" text-anchor="start">Operation failure: failed(id, reservation_id, max_attempts, reason).</text>
+  <text x="22" y="1348" font-size="22" text-anchor="start">Collect operation and update errors; continue with next item.</text>
+</g>
+<path d="M550.0,1090 V1190" class="arrow"/>
+<g id="core_4" data-box="0 1580 1100 240">
+  <rect x="0" y="1580" width="1100" height="240" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="1616" font-size="24" text-anchor="start" font-weight="700">RETURN BATCH RESULT</text>
+  <text x="22" y="1660" font-size="22" text-anchor="start">No collected errors: Ok(reserved count).</text>
+  <text x="22" y="1699" font-size="22" text-anchor="start">Any errors: Err(Vec&lt;EventError&gt;).</text>
+  <text x="22" y="1738" font-size="22" text-anchor="start">This ends the consumer call, not the worker loop.</text>
+</g>
+<path d="M550.0,1480 V1580" class="arrow"/>
+<path d="M1100,600 H1118 V1700 H1100" class="branch"/>
+  <text x="20" y="758" font-size="21" text-anchor="start">Non-empty → item loop</text>
+  <text x="1080" y="758" font-size="21" text-anchor="end">Empty / error → return</text>
+<path d="M0,1335 H-18 V945 H0" class="branch"/>
+  <text x="20" y="1535" font-size="21" text-anchor="start">Next item → execute</text>
+  <text x="1080" y="1535" font-size="21" text-anchor="end">Batch finished → return</text>
+</g>
+<path d="M3560,460 H3640 V325 H3700" class="arrow"/>
+  <text x="3640" y="430" font-size="20" text-anchor="middle">Spec</text>
+<path d="M3700,1700 H3625 V1640 H3560" class="arrow"/>
+<g id="boundary" data-box="80 825 2195 280">
+  <rect x="80" y="825" width="2195" height="280" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="102" y="861" font-size="24" text-anchor="start" font-weight="700">EARLY RETURNS AND OWNERSHIP</text>
+  <text x="102" y="905" font-size="22" text-anchor="start">Extraction errors bypass the endpoint and shared execution; render directly to the client.</text>
+  <text x="102" y="944" font-size="22" text-anchor="start">Adapter/service validation errors skip the consumer. Join failure enters the lower lane at the async bridge.</text>
+  <text x="102" y="983" font-size="22" text-anchor="start">Application owns mount prefix, middleware, runtime, and dependency assembly.</text>
+  <text x="102" y="1022" font-size="22" text-anchor="start">Dropping an HTTP future does not stop blocking work already started.</text>
+</g>
+<path d="M900.0,675 V755 H30 V1640 H80" class="branch"/>
+<path d="M2920,520 H2940 V1300 H2620.0 V1425" class="branch"/>
+  <text x="2340" y="1250" font-size="21" text-anchor="start">Join failure → error return</text>
+<path d="M2020.0,675 V725 H2300 V1230 H2020.0 V1425" class="branch"/>
+  <text x="1780" y="1195" font-size="21" text-anchor="start">Conversion failure → 400</text>
+  <text x="80" y="2000" font-size="24" text-anchor="start">Consumer errors: HTTP 200 batch JSON. Validation: 400. Task failure: sanitized 500.</text>
+</svg>

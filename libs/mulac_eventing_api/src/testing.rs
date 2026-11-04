@@ -26,7 +26,6 @@ pub mod prelude {
 use crate::service::prelude::EventingService;
 use eventing::prelude::{
     EventConsumer,
-    EventConsumerRepository,
     EventDispatcher,
     EventEnvelope,
     EventError,
@@ -192,7 +191,7 @@ fn service(reserve: Arc<dyn EventReservePort>, fail_marking: bool) -> (EventingS
         completed: doubles.completed.clone(),
         fail_marking,
     });
-    let repository = EventConsumerRepository::new(reserve, process);
+    let repository = Arc::new(Repository { reserve, process });
     let consumer = Arc::new(EventConsumer::new(repository, dispatcher));
     (EventingService::new(consumer), doubles)
 }
@@ -247,4 +246,29 @@ pub fn partially_failing_service() -> (EventingService, Arc<Mutex<usize>>) {
 /// Panics during reservation.
 pub fn panicking_service() -> EventingService {
     service(Arc::new(PanickingReservation), false).0
+}
+
+struct Repository {
+    reserve: Arc<dyn EventReservePort>,
+    process: Arc<dyn EventProcessPort>,
+}
+impl EventReservePort for Repository {
+    fn reserve(&self, spec: &ReservableEventSpec) -> Result<Vec<EventEnvelope>, EventError> {
+        self.reserve.reserve(spec)
+    }
+}
+impl EventProcessPort for Repository {
+    fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), EventError> {
+        self.process.completed(id, reservation_id)
+    }
+    fn failed(
+        &self,
+        id: Uuid,
+        reservation_id: Uuid,
+        max_attempts: i32,
+        reason: Option<String>,
+    ) -> Result<(), EventError> {
+        self.process
+            .failed(id, reservation_id, max_attempts, reason)
+    }
 }

@@ -7,7 +7,6 @@ pub mod prelude {
         NewEventMetadata,
         //
     };
-    pub use super::ports::{EventDispatchPort, EventProcessPort, EventStorePort};
 }
 
 mod models {
@@ -24,7 +23,7 @@ mod models {
         Ok(value)
     }
 
-    use crate::assembly::domain::ExtraInfo;
+    use crate::domain::prelude::ExtraInfo;
     use uuid::Uuid;
 
     /// Event envelope produced by a command handler and forwarded to the event
@@ -35,6 +34,21 @@ mod models {
         pub event_type: String,
         pub payload: String,
         pub metadata: Option<NewEventMetadata>,
+    }
+
+    impl NewEventEnvelope {
+        /// Build an envelope from an event type, serialized payload, and optional metadata.
+        pub fn new(
+            event_type: String,
+            payload: String,
+            metadata: Option<NewEventMetadata>,
+        ) -> Self {
+            Self {
+                event_type,
+                payload,
+                metadata,
+            }
+        }
     }
 
     #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
@@ -97,34 +111,82 @@ mod models {
         #[error("event dispatch error: {0}")]
         EventDispatch(String),
     }
+
+    impl EventError {
+        pub fn conversion(error: impl std::fmt::Display) -> Self {
+            Self::Conversion(error.to_string())
+        }
+
+        pub fn missing_event_metadata() -> Self {
+            Self::Conversion("event_id is required: metadata is missing".to_string())
+        }
+
+        pub fn invalid_event_sequence() -> Self {
+            Self::Conversion("sequence must be between 1 and i64::MAX".to_string())
+        }
+    }
+
+    #[cfg(test)]
+    mod tests {
+        use super::EventError;
+
+        #[test]
+        fn missing_event_metadata_returns_conversion_error() {
+            assert!(matches!(
+                EventError::missing_event_metadata(),
+                EventError::Conversion(message)
+                    if message == "event_id is required: metadata is missing"
+            ));
+        }
+
+        #[test]
+        fn conversion_preserves_error_text() {
+            let error = "not a number".parse::<u64>().unwrap_err();
+            let expected = error.to_string();
+            assert!(matches!(
+                EventError::conversion(error),
+                EventError::Conversion(message) if message == expected
+            ));
+        }
+
+        #[test]
+        fn invalid_event_sequence_returns_conversion_error() {
+            assert!(matches!(
+                EventError::invalid_event_sequence(),
+                EventError::Conversion(message)
+                    if message == "sequence must be between 1 and i64::MAX"
+            ));
+        }
+    }
 }
 
-mod ports {
-    use super::models::EventError;
-    use crate::prelude::NewEventEnvelope;
-    use uuid::Uuid;
+#[cfg(test)]
+mod envelope_tests {
+    use crate::prelude::{NewEventEnvelope, NewEventMetadata};
 
-    /// Port implemented by the event gateway to dispatch events produced by
-    /// command handlers. Defined in commanding so eventing can implement it
-    /// while depending on commanding (not the reverse).
-    pub trait EventDispatchPort: Send + Sync {
-        fn dispatch(&self, event: NewEventEnvelope) -> Result<(), EventError>;
-    }
+    #[test]
+    fn constructor_preserves_fields_with_and_without_metadata() {
+        let metadata = NewEventMetadata {
+            sequence: Some(1),
+            event_id: uuid::Uuid::now_v7(),
+            correlation_id: Some(uuid::Uuid::now_v7()),
+            causation_id: Some(uuid::Uuid::now_v7()),
+            source: Some("test".into()),
+        };
 
-    pub trait EventStorePort: Send + Sync {
-        fn record(&self, envelope: &NewEventEnvelope) -> Result<(), EventError>;
-    }
-
-    pub trait EventProcessPort: Send + Sync {
-        fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), EventError>;
-
-        fn failed(
-            &self,
-            id: Uuid,
-            reservation_id: Uuid,
-            max_attempts: i32,
-            reason: Option<String>,
-        ) -> Result<(), EventError>;
+        for metadata in [None, Some(metadata)] {
+            let envelope = NewEventEnvelope::new(
+                "test-event".into(),
+                r#"{"value":1}"#.into(),
+                metadata.clone(),
+            );
+            assert_eq!(envelope.event_type, "test-event");
+            assert_eq!(envelope.payload, r#"{"value":1}"#);
+            assert_eq!(
+                serde_json::to_value(envelope.metadata).unwrap(),
+                serde_json::to_value(metadata).unwrap()
+            );
+        }
     }
 }
 

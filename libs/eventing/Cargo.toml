@@ -4,10 +4,21 @@ version.workspace = true
 edition.workspace = true
 
 [features]
-default = ["diesel"]
+axum = ["api-tokio", "dep:axum", "dep:mulac_http", "mulac_http/axum"]
+axum-openapi = ["axum", "dep:utoipa", "mulac_http/axum-openapi"]
+poem = ["api-tokio", "dep:poem", "dep:poem-openapi", "dep:mulac_http", "mulac_http/poem"]
+api = ["dep:mulac_http"]
+api-tokio = ["api", "dep:tokio"]
+api-testing = ["api"]
+default = ["diesel", "api"]
 diesel = ["dep:diesel", "dep:mulac_diesel"]
 
 [dependencies]
+mulac_http = { path = "../mulac_http", version = "0.4.1", registry = "margo", default-features = false, optional = true }
+axum = { version = "0.8", default-features = false, features = ["json"], optional = true }
+utoipa = { version = "6", optional = true }
+poem = { version = "3", default-features = false, optional = true }
+poem-openapi = { version = "5", default-features = false, optional = true }
 thiserror.workspace = true
 uuid.workspace = true
 chrono.workspace = true
@@ -15,3 +26,18 @@ serde.workspace = true
 serde_json.workspace = true
 diesel = { workspace = true, optional = true }
 mulac_diesel = { workspace = true, optional = true }
+
+tokio = { workspace = true, features = ["rt"], optional = true }
+
+[dev-dependencies]
+axum = { version = "0.8", default-features = false, features = ["json", "tokio", "http1"] }
+poem = { version = "3", features = ["test"] }
+tokio = { workspace = true, features = ["macros", "rt-multi-thread", "net"] }
+
+[[example]]
+name = "axum_eventing_openapi"
+required-features = ["axum-openapi", "api-testing"]
+
+[[example]]
+name = "axum_eventing"
+required-features = ["axum", "api-testing"]

@@ -10,6 +10,8 @@ use crate::contract::prelude::{
 use crate::error::prelude::EventingApiError;
 use eventing::prelude::{
     EventConsumer,
+    EventProcessPort,
+    EventReservePort,
     ReservableEventSpec,
     //
 };
@@ -20,14 +22,22 @@ use std::sync::Arc;
 /// Running blocks on storage and subscribers; use `AsyncEventingService`
 /// (feature `tokio`) from async handlers.
 pub struct EventingService {
-    consumer: Arc<EventConsumer>,
+    run: Arc<dyn Fn(RunEventsRequest) -> RunEventsResponse + Send + Sync>,
 }
 
 impl EventingService {
     /// Wrap a consumer whose dispatcher the application or kernel assembled,
     /// for example `PersistentKernelHandle::event_consumer()`.
-    pub fn new(consumer: Arc<EventConsumer>) -> Self {
-        Self { consumer }
+    pub fn new<R: EventReservePort + EventProcessPort + 'static>(
+        consumer: Arc<EventConsumer<R>>,
+    ) -> Self {
+        Self {
+            run: Arc::new(move |request| {
+                RunEventsResponse::from_result(
+                    consumer.consume(&ReservableEventSpec::new(request.limit)),
+                )
+            }),
+        }
     }
 
     /// Dispatch up to `limit` due events with the default retry limit.
@@ -36,10 +46,7 @@ impl EventingService {
     /// that were dispatched successfully stay completed.
     pub fn run(&self, request: RunEventsRequest) -> Result<RunEventsResponse, EventingApiError> {
         request.validate()?;
-        let result = self
-            .consumer
-            .consume(&ReservableEventSpec::new(request.limit));
-        Ok(RunEventsResponse::from_result(result))
+        Ok((self.run)(request))
     }
 }
 

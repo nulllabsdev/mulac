@@ -1,4 +1,10 @@
-use chrono::{DateTime, Utc};
+#[cfg(any(feature = "diesel", test))]
+mod reservation_timeout_policy;
+pub mod prelude {
+    #[cfg(feature = "diesel")]
+    pub(crate) use super::reservation_timeout_policy::ReservationTimeoutPolicy;
+    pub use super::{EventStatus, ExtraInfo, UnknownEventStatus};
+}
 use thiserror::Error;
 
 #[derive(Debug, Clone, PartialEq, Eq, Default)]
@@ -24,12 +30,6 @@ impl ExtraInfo {
     }
 }
 
-pub fn append_error(extra_info: Option<ExtraInfo>, error: impl Into<String>) -> ExtraInfo {
-    let mut extra_info = extra_info.unwrap_or_default();
-    extra_info.add_error(error);
-    extra_info
-}
-
 /// Persistent event status codes.
 ///
 /// Values are stored as `Int4` in the database and must remain stable. The gaps
@@ -42,11 +42,11 @@ pub enum EventStatus {
     Received = 0,
     /// Claimed by a consumer; blocked from re-reservation until released.
     Reserved = 2,
-    /// Delivery attempt failed; scheduled for retry.
+    /// Attempt failed; eligible for retry only while below the attempt cap.
     Failed = 4,
     /// Delivered successfully to the subscriber port.
     Completed = 5,
-    /// Retry limit exhausted; will not be retried automatically.
+    /// Legacy/manual terminal status; automatic failures remain `Failed`.
     Dead = 7,
     /// Archived.
     Archive = 8,
@@ -89,15 +89,6 @@ impl EventStatus {
             Self::Archive => "archive",
         }
     }
-}
-
-#[cfg(feature = "diesel")]
-pub(crate) enum Criterion {
-    StatusIn(Vec<EventStatus>),
-    ScheduledBeforeNow,
-    MaxAttempts(i32),
-    ReservedBefore(DateTime<Utc>),
-    OrderByScheduledAtAsc,
 }
 
 #[cfg(test)]
@@ -145,16 +136,6 @@ mod tests {
         assert_eq!(EventStatus::Completed.as_str(), "completed");
         assert_eq!(EventStatus::Dead.as_str(), "dead");
         assert_eq!(EventStatus::Archive.as_str(), "archive");
-    }
-
-    #[test]
-    fn append_error_accumulates_errors() {
-        let extra_info = append_error(Some(ExtraInfo::with_error("first")), "second");
-
-        assert_eq!(
-            extra_info.errors(),
-            &["first".to_string(), "second".to_string()]
-        );
     }
 
     #[test]
