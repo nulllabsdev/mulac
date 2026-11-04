@@ -1,0 +1,131 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3435" height="2090" viewBox="0 0 3435 2090" role="img" aria-labelledby="title desc">
+  <title id="title">Running inbox messages via the application worker — illustrative worker</title>
+  <desc id="desc">Upper request/work lane runs left to right; shared execution is on the right; lower return lane runs right to left. Errors bypass success-only steps. Worker bypasses HTTP and response formatting.</desc>
+  <metadata>Hand-arranged native vector diagram. Editable Mermaid counterpart in flow.md has an independent automatic layout. No external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d}.arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}.branch{fill:none;stroke:#8250df;stroke-width:3;stroke-dasharray:8 5;marker-end:url(#arrow)}</style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#405675"/></marker></defs>
+  <rect width="3435" height="2090" fill="#f8fafc"/>
+  <text x="55" y="55" font-size="32" text-anchor="start" font-weight="700">Running inbox messages via the application worker — illustrative worker</text>
+  <text x="55" y="100" font-size="22" text-anchor="start">Application-owned example, not exported worker code. One second and ten items are illustrative choices.</text>
+  <rect x="60" y="150" width="2100" height="560" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <rect x="60" y="1330" width="2100" height="575" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="80" y="195" font-size="27" text-anchor="start" font-weight="700">REQUEST / START →</text>
+  <text x="80" y="1375" font-size="27" text-anchor="start" font-weight="700">← RETURN / HANDLE RESULT</text>
+  <rect x="2220" y="145" width="1160" height="1775" rx="15" fill="#f5f0ff" stroke="#8250df" stroke-width="2"/>
+  <text x="2250" y="195" font-size="26" text-anchor="start" font-weight="700">SHARED BATCH EXECUTION — src/application/</text>
+<g id="request_0" data-box="80 245 650 430">
+  <rect x="80" y="245" width="650" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="102" y="281" font-size="24" text-anchor="start" font-weight="700">Application assembly once</text>
+  <text x="102" y="325" font-size="22" text-anchor="start">Supply repository and CommandGateway.</text>
+  <text x="102" y="364" font-size="22" text-anchor="start">InboxConsumer::new(repository, gateway)</text>
+  <text x="102" y="403" font-size="22" text-anchor="start">Spawn an application-owned polling task;</text>
+  <text x="102" y="432" font-size="22" text-anchor="start">retain handle.</text>
+</g>
+<g id="response_0" data-box="80 1425 650 430">
+  <rect x="80" y="1425" width="650" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="102" y="1461" font-size="24" text-anchor="start" font-weight="700">CONTINUE, not shutdown</text>
+  <text x="102" y="1505" font-size="22" text-anchor="start">Return to sleep/cancellation select.</text>
+  <text x="102" y="1544" font-size="22" text-anchor="start">Do not repeat assembly or spawn another</text>
+  <text x="102" y="1573" font-size="22" text-anchor="start">worker.</text>
+  <text x="102" y="1612" font-size="22" text-anchor="start">Delay follows success, empty batches, and</text>
+  <text x="102" y="1641" font-size="22" text-anchor="start">failures.</text>
+</g>
+<g id="request_1" data-box="770 245 650 430">
+  <rect x="770" y="245" width="650" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="792" y="281" font-size="24" text-anchor="start" font-weight="700">Worker waits or stops</text>
+  <text x="792" y="325" font-size="22" text-anchor="start">tokio::select!: cancellation OR one-second</text>
+  <text x="792" y="354" font-size="22" text-anchor="start">sleep.</text>
+  <text x="792" y="393" font-size="22" text-anchor="start">Also wait before first batch.</text>
+  <text x="792" y="432" font-size="22" text-anchor="start">Cancellation selected: break; return ().</text>
+  <text x="792" y="471" font-size="22" text-anchor="start">Sleep finishes: start next batch.</text>
+</g>
+<g id="response_1" data-box="770 1425 650 430">
+  <rect x="770" y="1425" width="650" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="792" y="1461" font-size="24" text-anchor="start" font-weight="700">Match exactly one result</text>
+  <text x="792" y="1505" font-size="22" text-anchor="start">Ok(Ok(count)): continue; zero is normal.</text>
+  <text x="792" y="1544" font-size="22" text-anchor="start">Ok(Err(errors)): log each InboxError.</text>
+  <text x="792" y="1583" font-size="22" text-anchor="start">Err(JoinError): log task failure.</text>
+  <text x="792" y="1622" font-size="22" text-anchor="start">All result branches continue polling.</text>
+</g>
+<path d="M730,460 H770" class="arrow"/>
+<path d="M770,1640 H730" class="arrow"/>
+<g id="request_2" data-box="1460 245 650 430">
+  <rect x="1460" y="245" width="650" height="430" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="1482" y="281" font-size="24" text-anchor="start" font-weight="700">Start blocking batch</text>
+  <text x="1482" y="325" font-size="22" text-anchor="start">Clone Arc&lt;consumer&gt;.</text>
+  <text x="1482" y="364" font-size="22" text-anchor="start">tokio::task::spawn_blocking</text>
+  <text x="1482" y="403" font-size="22" text-anchor="start">consumer.process(&amp;ReservableInboxSpec::new(10))</text>
+  <text x="1482" y="442" font-size="22" text-anchor="start">Await task; do not overlap batches.</text>
+</g>
+<g id="response_2" data-box="1460 1425 650 430">
+  <rect x="1460" y="1425" width="650" height="430" rx="15" fill="#f0fff4" stroke="#1a7f37" stroke-width="2"/>
+  <text x="1482" y="1461" font-size="24" text-anchor="start" font-weight="700">Await task result</text>
+  <text x="1482" y="1505" font-size="22" text-anchor="start">Result&lt;Result&lt;usize, Vec&lt;InboxError&gt;&gt;,</text>
+  <text x="1482" y="1534" font-size="22" text-anchor="start">JoinError&gt;</text>
+  <text x="1482" y="1573" font-size="22" text-anchor="start">Consumer return completes the blocking</text>
+  <text x="1482" y="1602" font-size="22" text-anchor="start">closure.</text>
+  <text x="1482" y="1641" font-size="22" text-anchor="start">Task failure can skip normal consumer return.</text>
+</g>
+<path d="M1420,460 H1460" class="arrow"/>
+<path d="M1460,1640 H1420" class="arrow"/>
+<g id="shared-execution" transform="translate(2250 0)">
+<g id="core_0" data-box="0 245 1100 160">
+  <rect x="0" y="245" width="1100" height="160" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="281" font-size="24" text-anchor="start" font-weight="700">ENTRY</text>
+  <text x="22" y="325" font-size="22" text-anchor="start">InboxConsumer::process(&amp;spec)</text>
+  <text x="22" y="364" font-size="22" text-anchor="start">src/application/inbox_consumer.rs</text>
+</g>
+<g id="core_1" data-box="0 490 1100 220">
+  <rect x="0" y="490" width="1100" height="220" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="526" font-size="24" text-anchor="start" font-weight="700">RESERVE</text>
+  <text x="22" y="570" font-size="22" text-anchor="start">repository.reserve(&amp;spec)</text>
+  <text x="22" y="609" font-size="22" text-anchor="start">Reservation failure: Err([error]); execute nothing.</text>
+  <text x="22" y="648" font-size="22" text-anchor="start">Empty batch: Ok(0); no item work.</text>
+</g>
+<path d="M550.0,405 V490" class="arrow"/>
+<g id="core_2" data-box="0 800 1100 290">
+  <rect x="0" y="800" width="1100" height="290" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="836" font-size="24" text-anchor="start" font-weight="700">EXECUTE ONE ITEM</text>
+  <text x="22" y="880" font-size="22" text-anchor="start">Require reservation ID; convert to NewCommandEnvelope.</text>
+  <text x="22" y="919" font-size="22" text-anchor="start">Missing reservation: collect error, skip item.</text>
+  <text x="22" y="958" font-size="22" text-anchor="start">Conversion failure: failed(...), collect errors, continue.</text>
+  <text x="22" y="997" font-size="22" text-anchor="start">Dispatch through the configured CommandGateway.</text>
+</g>
+<path d="M550.0,710 V800" class="arrow"/>
+<g id="core_3" data-box="0 1190 1100 290">
+  <rect x="0" y="1190" width="1100" height="290" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="1226" font-size="24" text-anchor="start" font-weight="700">RECORD OUTCOME AND CONTINUE</text>
+  <text x="22" y="1270" font-size="22" text-anchor="start">After gateway dispatch only; early skips continue the loop.</text>
+  <text x="22" y="1309" font-size="22" text-anchor="start">Operation success: completed(id, reservation_id).</text>
+  <text x="22" y="1348" font-size="22" text-anchor="start">Operation failure: failed(id, reservation_id, max_attempts, reason).</text>
+  <text x="22" y="1387" font-size="22" text-anchor="start">Collect operation and update errors; continue with next item.</text>
+</g>
+<path d="M550.0,1090 V1190" class="arrow"/>
+<g id="core_4" data-box="0 1580 1100 240">
+  <rect x="0" y="1580" width="1100" height="240" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="22" y="1616" font-size="24" text-anchor="start" font-weight="700">RETURN BATCH RESULT</text>
+  <text x="22" y="1660" font-size="22" text-anchor="start">No collected errors: Ok(reserved count).</text>
+  <text x="22" y="1699" font-size="22" text-anchor="start">Any errors: Err(Vec&lt;InboxError&gt;).</text>
+  <text x="22" y="1738" font-size="22" text-anchor="start">This ends the consumer call, not the worker loop.</text>
+</g>
+<path d="M550.0,1480 V1580" class="arrow"/>
+<path d="M1100,600 H1118 V1700 H1100" class="branch"/>
+  <text x="20" y="758" font-size="21" text-anchor="start">Non-empty → item loop</text>
+  <text x="1080" y="758" font-size="21" text-anchor="end">Empty / error → return</text>
+<path d="M0,1335 H-18 V945 H0" class="branch"/>
+  <text x="20" y="1535" font-size="21" text-anchor="start">Next item → execute</text>
+  <text x="1080" y="1535" font-size="21" text-anchor="end">Batch finished → return</text>
+</g>
+<path d="M2110,460 H2190 V325 H2250" class="arrow"/>
+  <text x="2190" y="430" font-size="20" text-anchor="middle">Spec</text>
+<path d="M2250,1700 H2175 V1640 H2110" class="arrow"/>
+<g id="boundary" data-box="80 805 2030 250">
+  <rect x="80" y="805" width="2030" height="250" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="102" y="841" font-size="24" text-anchor="start" font-weight="700">WORKER BOUNDARY</text>
+  <text x="102" y="885" font-size="22" text-anchor="start">Consumer call is synchronous and bypasses HTTP adapters and API contracts.</text>
+  <text x="102" y="924" font-size="22" text-anchor="start">Cancellation is checked at sleep/select; an in-flight blocking batch is not interrupted.</text>
+  <text x="102" y="963" font-size="22" text-anchor="start">Retain and await the worker handle if shutdown must drain in-flight work.</text>
+</g>
+<path d="M405.0,1855 V2000 H25 V755 H1095.0 V675" class="branch"/>
+  <text x="900" y="2045" font-size="20" text-anchor="middle">Next iteration → wait/select, not application boot</text>
+</svg>

@@ -17,8 +17,8 @@ pub mod prelude {
 }
 
 #[cfg(feature = "amqp")]
-pub mod models {
-    use crate::assembly::prelude::{AcknowledgeHandle, InboxError};
+mod models {
+    use crate::application::prelude::{AcknowledgeHandle, InboxError};
     use lapin::Acker;
     use lapin::options::{BasicAckOptions, BasicNackOptions};
     use std::future::Future;
@@ -96,7 +96,7 @@ pub mod models {
 #[cfg(feature = "amqp")]
 mod conversions {
     use super::models::{AmqpMessage, AmqpMessageMetadata};
-    use crate::assembly::prelude::InboundMessageEnvelope;
+    use crate::application::prelude::InboundMessageEnvelope;
     use lapin::message::Delivery;
 
     impl From<&Delivery> for AmqpMessageMetadata {
@@ -290,7 +290,7 @@ mod client {
 #[cfg(feature = "amqp")]
 mod transport {
     use super::client::{AmqpClient, AmqpClientError};
-    use crate::assembly::prelude::{
+    use crate::application::prelude::{
         AcknowledgeHandle,
         InboundMessageEnvelope,
         InboxError,
@@ -340,8 +340,9 @@ mod transport {
 
 #[cfg(feature = "amqp")]
 mod worker_loop {
-    use crate::assembly::prelude::{InboxError, InboxTransportPort};
-    use crate::record_messages::prelude::{InboxRecorder, NewInboxMessageEnvelope};
+    use crate::application::prelude::{InboxError, InboxTransportPort};
+    use crate::application::prelude::{InboxStorePort, NewInboxMessageEnvelope};
+    use std::sync::Arc;
     use tokio::time::{Duration, sleep};
     use tokio_util::sync::CancellationToken;
 
@@ -349,7 +350,7 @@ mod worker_loop {
     /// and records them into the inbox.
     ///
     /// The loop polls the transport for the next delivery, offloads the synchronous
-    /// `InboxRecorder::publish` call to a blocking thread (Diesel is synchronous),
+    /// `InboxStorePort::store` call to a blocking thread (Diesel is synchronous),
     /// then acknowledges or nacks the external delivery based on the recording outcome.
     ///
     /// **On recording failure:** the delivery is nacked with requeue so the broker
@@ -367,15 +368,12 @@ mod worker_loop {
     /// sleep. Any in-flight recording completes before the loop exits.
     pub struct WorkerLoop<T: InboxTransportPort> {
         transport: T,
-        recorder: InboxRecorder,
+        store: Arc<dyn InboxStorePort>,
     }
 
     impl<T: InboxTransportPort> WorkerLoop<T> {
-        pub fn new(transport: T, recorder: InboxRecorder) -> Self {
-            Self {
-                transport,
-                recorder,
-            }
+        pub fn new(transport: T, store: Arc<dyn InboxStorePort>) -> Self {
+            Self { transport, store }
         }
 
         /// Run the consume-record-ack loop until the token is cancelled or a
@@ -391,9 +389,9 @@ mod worker_loop {
                         match result {
                             Ok(Some((msg, handle))) => {
                                 let envelope = NewInboxMessageEnvelope::from(msg);
-                                let recorder = self.recorder.clone();
+                                let store = self.store.clone();
                                 let recording_result =
-                                    tokio::task::spawn_blocking(move || recorder.publish(envelope))
+                                    tokio::task::spawn_blocking(move || store.store(envelope))
                                         .await
                                         .map_err(|e| InboxError::Recording(e.to_string()))?;
 
@@ -434,9 +432,10 @@ mod worker {
     use super::client::AmqpClientError;
     use super::transport::AmqpTransport;
     use super::worker_loop::WorkerLoop;
-    use crate::assembly::prelude::InboxError;
-    use crate::record_messages::prelude::InboxRecorder;
+    use crate::application::prelude::InboxError;
+    use crate::application::prelude::InboxStorePort;
     use lapin::Channel;
+    use std::sync::Arc;
     use tokio_util::sync::CancellationToken;
 
     pub struct AmqpWorker {
@@ -447,26 +446,26 @@ mod worker {
         pub async fn new(
             channel: &Channel,
             queue: &str,
-            recorder: InboxRecorder,
+            store: Arc<dyn InboxStorePort>,
         ) -> Result<Self, AmqpClientError> {
             let transport = AmqpTransport::new(channel, queue).await?;
-            Ok(Self::from_transport(transport, recorder))
+            Ok(Self::from_transport(transport, store))
         }
 
         pub async fn new_with_consumer_tag(
             channel: &Channel,
             queue: &str,
             consumer_tag: impl Into<String>,
-            recorder: InboxRecorder,
+            store: Arc<dyn InboxStorePort>,
         ) -> Result<Self, AmqpClientError> {
             let transport =
                 AmqpTransport::new_with_consumer_tag(channel, queue, consumer_tag).await?;
-            Ok(Self::from_transport(transport, recorder))
+            Ok(Self::from_transport(transport, store))
         }
 
-        pub fn from_transport(transport: AmqpTransport, recorder: InboxRecorder) -> Self {
+        pub fn from_transport(transport: AmqpTransport, store: Arc<dyn InboxStorePort>) -> Self {
             Self {
-                inner: WorkerLoop::new(transport, recorder),
+                inner: WorkerLoop::new(transport, store),
             }
         }
 

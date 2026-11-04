@@ -22,20 +22,15 @@ use crate::service::prelude::InboxService;
 use commanding::prelude::{
     CommandError,
     CommandGateway,
-    CommandRecorder,
-    CommandRecorderRepository,
     CommandStorePort,
     NewCommandEnvelope,
     //
 };
 use inbox::prelude::{
     InboxConsumer,
-    InboxConsumerRepository,
     InboxError,
     InboxMessageEnvelope,
     InboxProcessPort,
-    InboxRecorder,
-    InboxRecorderRepository,
     InboxReservePort,
     InboxStorePort,
     NewInboxMessageEnvelope,
@@ -253,17 +248,14 @@ impl CommandStorePort for UnusedCommandStore {
 }
 
 fn service(store: Arc<dyn InboxStorePort>, queue: Arc<dyn InboxReservePort>) -> InboxService {
-    let recorder = Arc::new(InboxRecorder::new(Arc::new(InboxRecorderRepository::new(
-        store,
-    ))));
-    let commands = Arc::new(CommandRecorder::new(Arc::new(
-        CommandRecorderRepository::new(Arc::new(UnusedCommandStore)),
-    )));
     let consumer = Arc::new(InboxConsumer::new(
-        InboxConsumerRepository::new(queue, Arc::new(UnusedProcess)),
-        CommandGateway::two_phased(commands),
+        Arc::new(Repository {
+            reserve: queue,
+            process: Arc::new(UnusedProcess),
+        }),
+        CommandGateway::two_phased(Arc::new(UnusedCommandStore)),
     ));
-    InboxService::new(recorder, consumer)
+    InboxService::new(store, consumer)
 }
 
 /// Stores successfully and runs empty batches.
@@ -280,4 +272,28 @@ pub fn failing_storage_service() -> InboxService {
 /// Panics during storage and reservation.
 pub fn panicking_service() -> InboxService {
     service(Arc::new(PanickingStore), Arc::new(PanickingQueue))
+}
+
+struct Repository {
+    reserve: Arc<dyn InboxReservePort>,
+    process: Arc<dyn InboxProcessPort>,
+}
+impl InboxReservePort for Repository {
+    fn reserve(&self, spec: &ReservableInboxSpec) -> Result<Vec<InboxMessageEnvelope>, InboxError> {
+        self.reserve.reserve(spec)
+    }
+}
+impl InboxProcessPort for Repository {
+    fn completed(&self, id: Uuid, reservation_id: Uuid) -> Result<(), InboxError> {
+        self.process.completed(id, reservation_id)
+    }
+    fn failed(
+        &self,
+        id: Uuid,
+        reservation_id: Uuid,
+        max: i32,
+        reason: Option<String>,
+    ) -> Result<(), InboxError> {
+        self.process.failed(id, reservation_id, max, reason)
+    }
 }

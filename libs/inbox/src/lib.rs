@@ -1,4 +1,14 @@
 //! Inbox components
+#[cfg(feature = "api")]
+mod http;
+
+mod amqp_consumption;
+mod application;
+mod domain;
+mod execution;
+#[cfg(feature = "diesel")]
+mod infra_diesel;
+
 pub mod prelude {
     #[cfg(feature = "amqp")]
     pub use crate::amqp_consumption::prelude::{
@@ -11,7 +21,7 @@ pub mod prelude {
         connection,
         //
     };
-    pub use crate::assembly::prelude::{
+    pub use crate::application::prelude::{
         AcknowledgeHandle,
         ExtraInfo,
         InboundMessageEnvelope,
@@ -19,45 +29,25 @@ pub mod prelude {
         InboxMessageEnvelope,
         InboxMessageMetadata,
         InboxProcessPort,
+        InboxReservePort,
+        InboxStorePort,
+        InboxSweepPort,
         InboxTransportFuture,
         InboxTransportPort,
         InboxTransportResult,
-        //
-    };
-    #[cfg(feature = "diesel")]
-    pub use crate::assembly::prelude::{
-        DbPool,
-        InboxConsumerStorage,
-        InboxStoreStorage,
-        build_pool,
-        //
-    };
-    pub use crate::inbox_consumer::prelude::{
-        InboxConsumer,
-        InboxConsumerRepository,
-        InboxReservePort,
-        ReservableInboxSpec,
-        //
-    };
-    #[cfg(feature = "diesel")]
-    pub use crate::record_messages::prelude::repository;
-    pub use crate::record_messages::prelude::{
-        InboxRecorder,
-        InboxRecorderRepository,
-        InboxStorePort,
         NewInboxMessageEnvelope,
-        //
-    };
-    pub use crate::stale_reservation_sweep::prelude::{
-        InboxSweepPort,
         ReservationSweeper,
         StaleReservationSpec,
         //
     };
+    pub use crate::execution::prelude::*;
+    #[cfg(feature = "api")]
+    pub use crate::http::prelude::*;
+    #[cfg(feature = "diesel")]
+    pub use crate::infra_diesel::prelude::{
+        DbPool,
+        DieselPgInboxRepository,
+        build_pool,
+        //
+    };
 }
-
-mod amqp_consumption;
-mod assembly;
-mod inbox_consumer;
-mod record_messages;
-mod stale_reservation_sweep;

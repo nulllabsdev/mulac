@@ -12,7 +12,9 @@ use crate::contract::prelude::{
 use crate::error::prelude::{InboxApiError, err_storage_failed};
 use inbox::prelude::{
     InboxConsumer,
-    InboxRecorder,
+    InboxProcessPort,
+    InboxReservePort,
+    InboxStorePort,
     NewInboxMessageEnvelope,
     ReservableInboxSpec,
     //
@@ -24,13 +26,21 @@ use std::sync::Arc;
 /// Both operations block on storage; use `AsyncInboxService` (feature
 /// `tokio`) from async handlers.
 pub struct InboxService {
-    recorder: Arc<InboxRecorder>,
-    consumer: Arc<InboxConsumer>,
+    store: Arc<dyn InboxStorePort>,
+    run: Arc<dyn Fn(RunRequest) -> RunResponse + Send + Sync>,
 }
 
 impl InboxService {
-    pub fn new(recorder: Arc<InboxRecorder>, consumer: Arc<InboxConsumer>) -> Self {
-        Self { recorder, consumer }
+    pub fn new<R: InboxReservePort + InboxProcessPort + 'static>(
+        store: Arc<dyn InboxStorePort>,
+        consumer: Arc<InboxConsumer<R>>,
+    ) -> Self {
+        Self {
+            store,
+            run: Arc::new(move |request| {
+                RunResponse::from_result(consumer.process(&ReservableInboxSpec::new(request.limit)))
+            }),
+        }
     }
 
     /// Assemble PostgreSQL storage from an existing pool.
@@ -39,34 +49,13 @@ impl InboxService {
     /// executes them.
     #[cfg(feature = "diesel")]
     pub fn from_postgres(pool: inbox::prelude::DbPool) -> Self {
-        use commanding::prelude::{
-            CommandGateway,
-            CommandRecorder,
-            CommandRecorderRepository,
-            CommandStoreStorage,
-            //
-        };
-        use inbox::prelude::{
-            InboxConsumerRepository,
-            InboxConsumerStorage,
-            InboxRecorderRepository,
-            InboxStoreStorage,
-            //
-        };
-
-        let store = Arc::new(InboxStoreStorage::new(pool.clone()));
-        let recorder = Arc::new(InboxRecorder::new(Arc::new(InboxRecorderRepository::new(
-            store,
-        ))));
-        let storage = Arc::new(InboxConsumerStorage::new(pool.clone()));
-        let commands = Arc::new(CommandRecorder::new(Arc::new(
-            CommandRecorderRepository::new(Arc::new(CommandStoreStorage::new(pool))),
-        )));
+        let store = Arc::new(inbox::prelude::DieselPgInboxRepository::new(pool.clone()));
+        let commands = Arc::new(commanding::prelude::DieselPgCommandRepository::new(pool));
         let consumer = Arc::new(InboxConsumer::new(
-            InboxConsumerRepository::new(storage.clone(), storage),
-            CommandGateway::two_phased(commands),
+            store.clone(),
+            commanding::prelude::CommandGateway::two_phased(commands),
         ));
-        Self::new(recorder, consumer)
+        Self::new(store, consumer)
     }
 
     /// Store one message; the ID is returned only after storage succeeds.
@@ -78,9 +67,7 @@ impl InboxService {
     ) -> Result<SubmitInboxResponse, InboxApiError> {
         let envelope = NewInboxMessageEnvelope::try_from(request)?;
         let message_id = envelope.id().to_string();
-        self.recorder
-            .publish(envelope)
-            .map_err(err_storage_failed)?;
+        self.store.store(envelope).map_err(err_storage_failed)?;
         Ok(SubmitInboxResponse { message_id })
     }
 
@@ -90,10 +77,7 @@ impl InboxService {
     /// messages that succeeded stay committed.
     pub fn run(&self, request: RunRequest) -> Result<RunResponse, InboxApiError> {
         request.validate()?;
-        let result = self
-            .consumer
-            .process(&ReservableInboxSpec::new(request.limit));
-        Ok(RunResponse::from_result(result))
+        Ok((self.run)(request))
     }
 }
 

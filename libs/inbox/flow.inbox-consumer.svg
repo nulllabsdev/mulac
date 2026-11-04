@@ -1,0 +1,118 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="3200" height="2470" viewBox="0 0 3200 2470" role="img" aria-labelledby="title desc">
+  <title id="title">Shared inbox batch execution</title>
+  <desc id="desc">Reserve a batch; return immediately on reservation failure. Process entries sequentially. Collect processing and lifecycle-update errors and continue. Return the reserved count only when no errors were collected. Empty batches return zero. No HTTP formatting or polling is included.</desc>
+  <metadata>Hand-arranged native vector diagram. Editable Mermaid counterpart in flow.md has an independent automatic layout. No external assets.</metadata>
+  <style>text{font-family:ui-sans-serif,system-ui,sans-serif;fill:#172b4d}.arrow{fill:none;stroke:#405675;stroke-width:3;marker-end:url(#arrow)}.branch{fill:none;stroke:#8250df;stroke-width:3;stroke-dasharray:8 5;marker-end:url(#arrow)}</style>
+  <defs><marker id="arrow" markerWidth="10" markerHeight="10" refX="9" refY="5" orient="auto"><path d="M0,0 L10,5 L0,10 Z" fill="#405675"/></marker></defs>
+  <rect width="3200" height="2470" fill="#f8fafc"/>
+  <text x="55" y="55" font-size="32" text-anchor="start" font-weight="700">Shared inbox batch execution</text>
+  <text x="55" y="100" font-size="22" text-anchor="start">Same consumer for Poem, Axum, and application workers. Calls and decision branches, not additional runtime layers.</text>
+<g id="start" data-box="225.0 140.0 850 120">
+  <rect x="225.0" y="140.0" width="850" height="120" rx="15" fill="#eff6ff" stroke="#0969da" stroke-width="2"/>
+  <text x="650" y="192.5" font-size="22" text-anchor="middle">InboxConsumer::process(&amp;spec)</text>
+  <text x="650" y="221.5" font-size="22" text-anchor="middle">Spec: ReservableInboxSpec</text>
+</g>
+<g id="reserve" data-box="225.0 330.0 850 140">
+  <rect x="225.0" y="330.0" width="850" height="140" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="650" y="392.5" font-size="22" text-anchor="middle">repository.reserve(&amp;spec)</text>
+  <text x="650" y="421.5" font-size="22" text-anchor="middle">Reserve up to spec.limit eligible entries</text>
+</g>
+<g id="next" data-box="380.0 560.0 540 180">
+<polygon points="650,560.0 920.0,650 650,740.0 380.0,650" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="650" y="657.0" font-size="22" text-anchor="middle">Another reserved item?</text>
+</g>
+<g id="errors" data-box="2250.0 545.0 700 210">
+<polygon points="2600,545.0 2950.0,650 2600,755.0 2250.0,650" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="2600" y="657.0" font-size="22" text-anchor="middle">Any collected errors?</text>
+</g>
+<g id="ok" data-box="2175.0 855.0 850 150">
+  <rect x="2175.0" y="855.0" width="850" height="150" rx="15" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="2600" y="922.5" font-size="22" text-anchor="middle">Return Ok(reserved count)</text>
+  <text x="2600" y="951.5" font-size="22" text-anchor="middle">Empty batch: Ok(0)</text>
+</g>
+<g id="err" data-box="2175.0 1145.0 850 150">
+  <rect x="2175.0" y="1145.0" width="850" height="150" rx="15" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="2600" y="1212.5" font-size="22" text-anchor="middle">Return Err(Vec&lt;InboxError&gt;)</text>
+  <text x="2600" y="1241.5" font-size="22" text-anchor="middle">No partial success count</text>
+</g>
+<path d="M650,260 V330" class="arrow"/>
+<path d="M650,470 V560" class="arrow"/>
+  <text x="760" y="520" font-size="20" text-anchor="middle">Ok(entries)</text>
+<path d="M1075,400 H3120 V1220 H3025" class="arrow"/>
+  <text x="2300" y="370" font-size="20" text-anchor="middle">Reservation failure: execute nothing</text>
+<path d="M920,650 H2250" class="arrow"/>
+  <text x="1585" y="620" font-size="20" text-anchor="middle">No: batch finished or empty</text>
+<path d="M2600,755 V855" class="arrow"/>
+  <text x="2650" y="810" font-size="20" text-anchor="middle">No</text>
+<path d="M2950,650 H3070 V1110 H2600 V1145" class="arrow"/>
+  <text x="3020" y="620" font-size="20" text-anchor="middle">Yes</text>
+<g id="reservation" data-box="330.0 810.0 640 180">
+<polygon points="650,810.0 970.0,900 650,990.0 330.0,900" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="650" y="907.0" font-size="22" text-anchor="middle">Reservation ID present?</text>
+</g>
+<g id="missing" data-box="1250.0 820.0 800 160">
+  <rect x="1250.0" y="820.0" width="800" height="160" rx="15" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="1650" y="892.5" font-size="22" text-anchor="middle">Collect InboxError::MissingReservation</text>
+  <text x="1650" y="921.5" font-size="22" text-anchor="middle">No lifecycle update; skip item</text>
+</g>
+<g id="convert" data-box="225.0 1055.0 850 150">
+  <rect x="225.0" y="1055.0" width="850" height="150" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="650" y="1137.0" font-size="22" text-anchor="middle">Convert stored message to NewCommandEnvelope</text>
+</g>
+<g id="converted" data-box="330.0 1270.0 640 180">
+<polygon points="650,1270.0 970.0,1360 650,1450.0 330.0,1360" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="650" y="1367.0" font-size="22" text-anchor="middle">Conversion succeeded?</text>
+</g>
+<g id="invalid" data-box="1250.0 1270.0 800 180">
+  <rect x="1250.0" y="1270.0" width="800" height="180" rx="15" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="1650" y="1338.0" font-size="22" text-anchor="middle">repository.failed(id, reservation_id,</text>
+  <text x="1650" y="1367.0" font-size="22" text-anchor="middle">max_attempts, reason)</text>
+  <text x="1650" y="1396.0" font-size="22" text-anchor="middle">Collect conversion and update errors</text>
+</g>
+<g id="execute" data-box="225.0 1525.0 850 150">
+  <rect x="225.0" y="1525.0" width="850" height="150" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="650" y="1607.0" font-size="22" text-anchor="middle">CommandGateway::dispatch(envelope)</text>
+</g>
+<g id="success" data-box="330.0 1740.0 640 180">
+<polygon points="650,1740.0 970.0,1830 650,1920.0 330.0,1830" fill="#fff7ed" stroke="#c2410c" stroke-width="2"/>
+  <text x="650" y="1837.0" font-size="22" text-anchor="middle">Dispatch succeeded?</text>
+</g>
+<g id="failed" data-box="1250.0 1730.0 800 200">
+  <rect x="1250.0" y="1730.0" width="800" height="200" rx="15" fill="#fef2f2" stroke="#dc2626" stroke-width="2"/>
+  <text x="1650" y="1808.0" font-size="22" text-anchor="middle">repository.failed(id, reservation_id,</text>
+  <text x="1650" y="1837.0" font-size="22" text-anchor="middle">max_attempts, reason)</text>
+  <text x="1650" y="1866.0" font-size="22" text-anchor="middle">Collect operation and update errors</text>
+</g>
+<g id="completed" data-box="225.0 2005.0 850 150">
+  <rect x="225.0" y="2005.0" width="850" height="150" rx="15" fill="#f0fdf4" stroke="#16a34a" stroke-width="2"/>
+  <text x="650" y="2072.5" font-size="22" text-anchor="middle">repository.completed(id, reservation_id)</text>
+  <text x="650" y="2101.5" font-size="22" text-anchor="middle">Collect update error, if any</text>
+</g>
+<g id="collect" data-box="225.0 2265.0 850 150">
+  <rect x="225.0" y="2265.0" width="850" height="150" rx="15" fill="#ffffff" stroke="#94a3b8" stroke-width="2"/>
+  <text x="650" y="2332.5" font-size="22" text-anchor="middle">Continue with next reserved item</text>
+  <text x="650" y="2361.5" font-size="22" text-anchor="middle">Keep all collected errors</text>
+</g>
+<path d="M650,740 V810" class="arrow"/>
+  <text x="700" y="785" font-size="20" text-anchor="middle">Yes</text>
+<path d="M970,900 H1250" class="arrow"/>
+  <text x="1100" y="875" font-size="20" text-anchor="middle">No</text>
+<path d="M650,990 V1055" class="arrow"/>
+  <text x="700" y="1035" font-size="20" text-anchor="middle">Yes</text>
+<path d="M650,1205 V1270" class="arrow"/>
+<path d="M970,1360 H1250" class="arrow"/>
+  <text x="1100" y="1335" font-size="20" text-anchor="middle">No</text>
+<path d="M650,1450 V1525" class="arrow"/>
+  <text x="700" y="1495" font-size="20" text-anchor="middle">Yes</text>
+<path d="M650,1675 V1740" class="arrow"/>
+<path d="M970,1830 H1250" class="arrow"/>
+  <text x="1100" y="1805" font-size="20" text-anchor="middle">No</text>
+<path d="M650,1920 V2005" class="arrow"/>
+  <text x="700" y="1965" font-size="20" text-anchor="middle">Yes</text>
+<path d="M650,2155 V2265" class="arrow"/>
+<path d="M2050,900 H2120 V2340 H1075" class="arrow"/>
+<path d="M2050,1360 H2120 V2340 H1075" class="arrow"/>
+<path d="M2050,1830 H2120 V2340 H1075" class="arrow"/>
+<path d="M225,2340 H100 V650 H380" class="arrow"/>
+  <text x="210" y="610" font-size="20" text-anchor="middle">Next item</text>
+</svg>
