@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Removed
+
+- Remove `mulac_commanding_api`, `mulac_eventing_api`, `mulac_inbox_api`,
+  `mulac_outbox_api`, `mulac_axum`, and `mulac_poem`. Their services and adapters
+  now live behind features on the core crates. See
+  [ADR-011](docs/adr/011-core-http-features.md) for the import migration.
+
 ## [0.4.1] - 2026-10-31
 
 ### Changed

@@ -20,7 +20,7 @@ pub mod prelude {         // public: re-exports only
 }
 ```
 
-Callers must import through `feature::prelude::*`, never through internal sub-modules like `feature::commanding::*` or `feature::http::*`. This convention applies across libraries, kernel, and test applications, including outbox and outbox_api. Standard-library and third-party I/O modules (such as `std::io`) are unaffected.
+Callers must import through `feature::prelude::*`, never through internal sub-modules like `feature::commanding::*` or `feature::http::*`. This convention applies across libraries, kernel, and test applications. Standard-library and third-party I/O modules (such as `std::io`) are unaffected.
 
 ## Conventional Commits
 

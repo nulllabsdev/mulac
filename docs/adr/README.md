@@ -10,8 +10,8 @@
 | [006](006-cargo-feature-flags.md)         | Cargo Feature Flags for Optional Infrastructure      | Accepted              |
 | [007](007-use-case-split-repositories.md) | Use-Case-Split Repositories and Storage Adapters     | Superseded by ADR-012 |
 | [008](008-arc-dyn-trait-dependencies.md)  | Arc\<dyn Trait\> for Shared Port Dependencies        | Accepted              |
-| [009](009-inbox-http-adapters.md)         | Shared Inbox HTTP API with Poem and Axum Adapters    | Accepted              |
-| [010](010-queue-http-apis.md)             | Commanding, Eventing and Outbox HTTP APIs            | Accepted              |
+| [009](009-inbox-http-adapters.md)         | Shared Inbox HTTP API with Poem and Axum Adapters    | Accepted; see ADR-011 |
+| [010](010-queue-http-apis.md)             | Commanding, Eventing and Outbox HTTP APIs            | Accepted; see ADR-011 |
 
 ## Adding a new ADR
 

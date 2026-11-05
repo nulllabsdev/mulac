@@ -1,6 +1,6 @@
 # ADR-009: Shared Inbox HTTP API with Poem and Axum Adapters
 
-**Status:** Accepted  
+**Status:** Accepted; crate layout superseded by [ADR-011](011-core-http-features.md), which removed the crates named here.  
 **Date:** 2026-10-22
 
 ## Context

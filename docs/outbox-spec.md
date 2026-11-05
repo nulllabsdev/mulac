@@ -99,7 +99,7 @@ not count as published unless the broker routed and confirmed it.
 - Connecting and publishing are bounded by a timeout, 10 seconds by default
   (`ConfirmedAmqpPublisher::DEFAULT_TIMEOUT`, `with_timeout`).
 - `publish` never creates a runtime. It needs a current Tokio runtime handle
-  and must run on that runtime's blocking pool, as `outbox_api`'s
+  and must run on that runtime's blocking pool, as
   `AsyncOutboxService` does.
 - Errors are fixed strings without broker diagnostics:
 

@@ -15,9 +15,8 @@ import tomllib
 ROOT = Path(__file__).resolve().parents[1]
 # Each dependency must be added before Cargo resolves the next package.
 PACKAGES = [
-    "libs/mulac_diesel", "libs/eventing", "libs/commanding", "libs/outbox",
-    "libs/inbox", "libs/mulac_inbox_api", "libs/mulac_commanding_api", "libs/mulac_eventing_api",
-    "libs/mulac_outbox_api", "libs/mulac_poem", "libs/mulac_axum", "kernel",
+    "libs/mulac_http", "libs/mulac_diesel", "libs/eventing", "libs/commanding",
+    "libs/outbox", "libs/inbox", "kernel",
 ]
 
 

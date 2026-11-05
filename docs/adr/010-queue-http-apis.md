@@ -1,6 +1,6 @@
 # ADR-010: Commanding, Eventing and Outbox HTTP APIs
 
-**Status:** Accepted  
+**Status:** Accepted; crate layout superseded by [ADR-011](011-core-http-features.md), which removed the crates named here.  
 **Date:** 2026-10-22
 
 ## Context

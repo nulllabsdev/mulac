@@ -4,15 +4,9 @@ members = [
     "mulac_http",
     "inbox",
     "outbox",
-    "mulac_outbox_api",
     "commanding",
-    "mulac_commanding_api",
     "eventing",
-    "mulac_eventing_api",
     "mulac_diesel",
-    "mulac_inbox_api",
-    "mulac_poem",
-    "mulac_axum",
 ]
 
 [workspace.package]
@@ -28,10 +22,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 diesel = { version = "2", features = ["postgres", "r2d2", "uuid", "chrono", "serde_json"] }
 mulac_diesel = { path = "./mulac_diesel", version = "0.4.1", registry = "margo" }
-mulac_inbox_api = { path = "./mulac_inbox_api", version = "0.4.1", registry = "margo", default-features = false }
-mulac_commanding_api = { path = "./mulac_commanding_api", version = "0.4.1", registry = "margo", default-features = false }
-mulac_eventing_api = { path = "./mulac_eventing_api", version = "0.4.1", registry = "margo", default-features = false }
-mulac_outbox_api = { path = "./mulac_outbox_api", version = "0.4.1", registry = "margo", default-features = false }
 tokio = { version = "1" }
 tokio-util = { version = "0.7" }
 lapin = { version = "4.5.0" }
